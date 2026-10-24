@@ -247,7 +247,11 @@ if(WIN32)
     target_sources(xdb_core PRIVATE src/wifi/PairRecordWindows.cpp)
     target_link_libraries(xdb_core PUBLIC ws2_32 PRIVATE advapi32 iphlpapi)
 endif()
-target_compile_options(xdb_core PRIVATE -Wall -Wextra)
+# -Wall/-Wextra 是 GCC/Clang 选项；MSVC 把 /Wextra 当作非法的警告等级数字报 D8021。
+# MSVC 保持默认警告级别，避免与嵌入方的 /WX 设置产生新的告警错误。
+if(NOT MSVC)
+    target_compile_options(xdb_core PRIVATE -Wall -Wextra)
+endif()
 
 if(XDB_LIBAVFORMAT_FOUND)
     target_link_libraries(xdb_core PUBLIC PkgConfig::RECORDING_AVFORMAT)
