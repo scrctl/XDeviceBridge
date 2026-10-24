@@ -239,3 +239,55 @@ a disposable server data directory and did not replace the saved pairing records
 This verifies Cryptex replacement on the stated device/OS; Classic and older
 Personalized installations, other models and Android-host installation remain
 outside this acceptance result.
+
+## Windows client/server and MaaFramework C ABI acceptance (2026-10-25)
+
+### Windows AMDP USB and Wi-Fi (Parallels VM)
+
+The official `xdb-windows-amd64.zip` release artifact of v1.0.0 ran on
+Windows 11 (build 26100) inside a Parallels VM with `AppleMobileDeviceProcess`
+as the usbmux provider, against iPhone14,4 / iOS 27.0.1 attached by USB
+passthrough:
+
+1. `devices` listed the device through USB; the CLI auto-started the
+   background server. `pair --usb` completed handshake, SRP mutual
+   verification, host-key registration and record re-verification.
+2. A USB session returned `device.info`, a 1125×2436 PNG screenshot, a
+   1136×2464 BGRA video frame (byte count matches `row_pitch × height`
+   exactly), touch input and the power key.
+3. `pair --wifi` completed the advertised PIN flow (host shown as
+   `xdb - YJBEETLE42B4`), and its post-pairing reconnect verified the new
+   Wi-Fi record. A `transport: "wifi"` session then succeeded through
+   auto-discovery without an explicit address: `device.info`, PNG screenshot
+   and video frame all returned over Wi-Fi.
+
+This validates the released Windows client, server, AMDP transport and both
+device transports inside a VM. Bare-metal Windows, other Windows builds and
+Intel Windows remain outside this result.
+
+### MaaFramework real C ABI (macOS host)
+
+MaaFramework built at `bf23044a` (PR #1574, xdb pinned to v1.0.0 `fea3f0f`)
+drove the same device through the real `libMaaFramework` /
+`libMaaIOSControlUnit` path: `MaaIOSControllerCreate`,
+`PostConnection`, `GetUuid` (exact UDID), `PostScreencap` with both the
+default short-side-720 scaling (720×1559) and
+`MaaCtrlOption_ScreenshotUseRawSize` (1125×2436, matching the stream display
+geometry), `PostClick`, `PostKeyDown/Up` and `PostStartApp/StopApp` all
+returned success. This closes the "simulated server only" gap for the C ABI
+path on macOS; Windows MaaFramework runs of the C ABI remain build-verified
+only.
+
+### Stream silence observation (macOS)
+
+With a USB video session running, locking the screen and holding it locked
+for 45 seconds did not silence the stream: frame serials kept advancing
+(30 → 2173 → 2320) with `video_unusable` false and no restart. True receive
+silence could not be induced non-destructively on this device/OS, so the
+silence-recovery change (`81d89123` on the MaaFramework side, server-owned
+recovery) remains covered by simulated-server tests only. Lock-screen frames
+stay capturable on this device.
+
+The host Mac itself could not complete Wi-Fi sessions on this LAN
+(unicast to the device returned host-unreachable while ICMP passed); Wi-Fi
+transport evidence above was collected from the Windows VM instead.
