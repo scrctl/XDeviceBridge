@@ -70,7 +70,7 @@ std::optional<json::Value> do_handshake(Rppairing &channel, bool attempt_verify,
         err = "Handshake response missing response._1.handshake._0";
         return std::nullopt;
     }
-    return *zero;
+    return std::optional<json::Value>(*zero);
 }
 
 /// 解析完整外层 TLV，成功回复的 State 必须是预期的单字节阶段。

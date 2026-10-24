@@ -1,6 +1,10 @@
 #include "wifi/RemotePairing.h"
 
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "wifi/PairRecord.h"
 
@@ -9,7 +13,13 @@ namespace xdb::wifi {
 std::optional<uint16_t> request_tcp_listener(Rppairing &channel, const Bytes &tunnel_key,
                                              std::string &err) {
     const json::Value connection =
-        j_obj({{"owningPID", j_int(static_cast<int64_t>(::getpid()))},
+        j_obj({{"owningPID", j_int(static_cast<int64_t>(
+#ifdef _WIN32
+                                                 _getpid()
+#else
+                                                 ::getpid()
+#endif
+                                                 ))},
                {"owningProcessName", j_str("CoreDeviceService")}});
     const json::Value listener =
         j_obj({{"key", j_str(b64_encode(tunnel_key))},

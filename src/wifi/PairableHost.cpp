@@ -64,7 +64,7 @@ public:
             return std::nullopt;
         }
         ++incoming_;
-        return *body;
+        return std::optional<json::Value>(*body);
     }
 
     bool send(const json::Value &body, std::string &err) {

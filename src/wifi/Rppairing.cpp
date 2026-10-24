@@ -90,7 +90,7 @@ std::optional<json::Value> Rppairing::receive(std::string &err) {
             err = "plain missing _0";
             return std::nullopt;
         }
-        return *inner;
+        return std::optional<json::Value>(*inner);
     }
     const json::Value *encrypted = json::find(*message, "streamEncrypted");
     if (encrypted == nullptr) {
@@ -139,7 +139,7 @@ std::optional<json::Value> Rppairing::receive(std::string &err) {
         err = "Device rejected request: " + (why != nullptr ? json::as_string_or(*why) : std::string("(no description)"));
         return std::nullopt;
     }
-    return *body_of_response;
+    return std::optional<json::Value>(*body_of_response);
 }
 
 std::optional<json::Value> Rppairing::plain_roundtrip(const json::Value &inner, std::string &err) {
