@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "ipc/Json.h"
+#include "cli/Help.h"
 #include "util/DataDirectory.h"
 #include "ipc/Wire.h"
 #include "xdb/xdb.h"
@@ -37,41 +38,24 @@ int number(const std::string &value, int minimum, int maximum) {
         throw std::invalid_argument("Numeric option out of range");
     return int(n);
 }
-void help() {
-    std::cout << "XDeviceBridge " XDB_VERSION_STRING "\n"
-                 "xdb start-server [--data-dir DIR] [--port PORT]\n"
-                 "xdb kill-server [--port PORT]\n"
-                 "xdb server [--data-dir DIR] [--port PORT]\n"
-                 "xdb devices [-l] [--usb|--wifi] [--timeout MS]\n"
-                 "xdb [-s UDID] pair [--wifi|--usb] [--timeout MS]\n"
-                 "xdb [-s UDID] ddi prepare [--wifi [ADDRESS]] [--cache-dir DIR] [--replace]\n"
-                 "xdb [-s UDID] screenshot FILE [--wifi [ADDRESS]]\n"
-                 "xdb rpc METHOD [JSON_PARAMS] [--output FILE]\n"
-                 "xdb rpc-shell\n"
-                 "Client options: --port PORT (or XDB_PORT).\n"
-                 "Server listens on loopback only. Default port: 17423. --port 0 selects a free port.\n"
-                 "Desktop clients automatically start a background server when needed.\n"
-                 "Use server to run in the foreground for diagnostics.\n"
-                 "A sole discovered device is selected when -s is omitted.\n"
-                 "devices: connected = active session, paired = local record, discovered = no verified record.\n"
-                 "Pairing records do not prove device connectivity; use -l for candidate details.\n"
-                 "rpc-shell is a JSON debugging console, not an iOS command shell.\n";
-}
 } // namespace
 int main(int argc, char **argv) {
     try {
-        if (argc < 2 || std::string(argv[1]) == "--help") {
-            help();
+        if (argc < 2) {
+            xdb::cli::print_help({});
             return 0;
         }
-        uint16_t port = *env("XDB_PORT") ? uint16_t(number(env("XDB_PORT"), 1, 65535)) : 17423;
+        uint16_t port = 17423;
         std::string dir, output, serial, wifi_address, cache;
         bool wifi = false, usb = false, replace = false, json_output = false, long_output = false;
+        bool show_help = false, explicit_port = false;
         int timeout = -1;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
-            if (a == "--wifi") {
+            if (a == "--help" || a == "-h")
+                show_help = true;
+            else if (a == "--wifi") {
                 wifi = true;
                 wifi_address = "auto";
                 if (i + 1 < argc) {
@@ -94,9 +78,10 @@ int main(int argc, char **argv) {
                        a == "--serial" || a == "--timeout" || a == "--cache-dir") {
                 if (++i == argc)
                     throw std::invalid_argument("Missing value for " + a);
-                if (a == "--port")
+                if (a == "--port") {
                     port = uint16_t(number(argv[i], 0, 65535));
-                else if (a == "--data-dir")
+                    explicit_port = true;
+                } else if (a == "--data-dir")
                     dir = argv[i];
                 else if (a == "--output")
                     output = argv[i];
@@ -111,6 +96,12 @@ int main(int argc, char **argv) {
             else
                 args.push_back(a);
         }
+        if (show_help) {
+            xdb::cli::print_help(args);
+            return 0;
+        }
+        if (!explicit_port && *env("XDB_PORT"))
+            port = uint16_t(number(env("XDB_PORT"), 1, 65535));
         if (wifi && usb)
             throw std::invalid_argument("Choose --usb or --wifi");
         if (args.empty())
