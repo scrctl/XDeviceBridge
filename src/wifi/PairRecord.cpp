@@ -11,6 +11,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#endif
 #endif
 
 #include <cerrno>
@@ -19,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <system_error>
 
 #include "wifi/Tlv.h"
 
@@ -84,12 +89,22 @@ bool write_file(const std::string &path, std::string_view text, std::string &err
         ::remove(tmp.c_str());
         return false;
     }
-    // link publishes the finished private inode exclusively. An existing
-    // filename or symlink wins the race; only replacement mode uses rename.
-    if ((replace ? std::rename(tmp.c_str(), path.c_str()) : ::link(tmp.c_str(), path.c_str())) != 0) {
-        err = !replace && errno == EEXIST
+    // Publish exclusively without exposing an incomplete record. Android's
+    // app SELinux policy forbids hard links even inside its private data dir.
+    // renameat2 preserves no-replace semantics, including existing symlinks;
+    // use the syscall directly so this works below Android API 30 as well.
+#ifdef __linux__
+    const auto published = replace ? std::rename(tmp.c_str(), path.c_str())
+        : ::syscall(SYS_renameat2, AT_FDCWD, tmp.c_str(), AT_FDCWD, path.c_str(), RENAME_NOREPLACE);
+#else
+    const auto published = replace ? std::rename(tmp.c_str(), path.c_str())
+        : ::link(tmp.c_str(), path.c_str());
+#endif
+    if (published != 0) {
+        const int code = errno;
+        err = !replace && code == EEXIST
             ? "Pairing record already exists; Wi-Fi pairing will not replace it"
-            : "Rename failed";
+            : "Cannot publish pairing record: " + std::error_code(code, std::generic_category()).message();
         ::remove(tmp.c_str());
         return false;
     }

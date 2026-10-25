@@ -1289,6 +1289,29 @@ void test_record_listing() {
         check(xdb::wifi::save_record(deep_path, rec, err), "已有记录可原子替换");
         const auto updated = xdb::wifi::load_record(deep_path, err);
         check(updated && updated->host_private_key == rec.host_private_key, "替换后读取新记录");
+        const auto exclusive_path = deep / "exclusive.pair";
+        check(xdb::wifi::save_record_new(exclusive_path.string(), rec, err),
+              "New pairing record publishes without requiring a hard link on Android/Linux");
+        auto different = rec;
+        different.host_private_key = Bytes(32, 0x44);
+        check(!xdb::wifi::save_record_new(exclusive_path.string(), different, err) &&
+              err == "Pairing record already exists; Wi-Fi pairing will not replace it",
+              "Exclusive save refuses an existing record");
+        const auto unchanged = xdb::wifi::load_record(exclusive_path.string(), err);
+        check(unchanged && unchanged->host_private_key == rec.host_private_key,
+              "Exclusive save failure preserves the existing record");
+#ifndef _WIN32
+        const auto symlink_path = deep / "exclusive-symlink.pair";
+        std::filesystem::create_symlink(exclusive_path, symlink_path, ec);
+        check(!ec && !xdb::wifi::save_record_new(symlink_path.string(), different, err) &&
+              std::filesystem::is_symlink(symlink_path),
+              "Exclusive save refuses an existing symlink");
+#endif
+        bool temporary_left = false;
+        for (const auto &entry : std::filesystem::directory_iterator(deep)) {
+            temporary_left |= entry.path().filename().string().find(".tmp.") != std::string::npos;
+        }
+        check(!temporary_left, "Record publication success and failure clean up temporary files");
         // 文件读取边界：未知字段可被忽略，但整份文本的大小限制必须生效。
         const auto bounded_path = deep / "bounded.pair";
         const auto text = xdb::wifi::format_record(rec) + "padding=";
