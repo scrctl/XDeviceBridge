@@ -4,6 +4,7 @@
 #include "util/DataDirectory.h"
 #include "ipc/Wire.h"
 #include "xdb/xdb.h"
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -37,6 +38,54 @@ int number(const std::string &value, int minimum, int maximum) {
     if (used != value.size() || n < minimum || n > maximum)
         throw std::invalid_argument("Numeric option out of range");
     return int(n);
+}
+
+std::string endpoint_label(const Json &candidate) {
+    auto label = candidate["transport"].get<std::string>();
+    auto address = candidate["address"].get<std::string>();
+    if (!address.empty()) {
+        if (address.find(':') != std::string::npos)
+            address = "[" + address + "]";
+        label += " " + address + ":" + std::to_string(candidate["port"].get<int>());
+    }
+    return label;
+}
+
+void print_devices(const Json &result, bool detailed) {
+    std::cout << "List of iOS devices\n";
+    for (const auto &device : result["devices"]) {
+        auto udid = device.value("udid", std::string());
+        std::cout << (udid.empty() ? "(unidentified)" : udid) << "\t"
+                  << device.value("state", std::string("discovered"));
+        if (detailed) {
+            auto name = device.value("name", std::string());
+            if (!name.empty()) std::cout << "  name:" << name;
+            std::cout << "  connection:" << device.value("connection", std::string("unverified"));
+        }
+        std::cout << '\n';
+        if (!detailed) continue;
+
+        const auto pairing = device.value("pairing", std::string("unknown"));
+        size_t width = 0;
+        for (const auto &candidate : device["candidates"])
+            width = std::max(width, endpoint_label(candidate).size());
+        for (const auto &candidate : device["candidates"]) {
+            auto label = endpoint_label(candidate);
+            auto interface_name = candidate.value("interface", std::string());
+            auto type = candidate.value("connection_type", std::string());
+            auto candidate_pairing = candidate.value("pairing", std::string("unknown"));
+            const bool show_pairing = !candidate_pairing.empty() && candidate_pairing != pairing;
+            std::cout << "  " << label;
+            if (!interface_name.empty() || !type.empty() || show_pairing)
+                std::cout << std::string(width - label.size(), ' ');
+            if (!interface_name.empty()) std::cout << "  interface:" << interface_name;
+            if (!type.empty()) std::cout << "  type:" << type;
+            if (show_pairing) std::cout << "  pairing:" << candidate_pairing;
+            std::cout << '\n';
+        }
+    }
+    for (const auto &warning : result["warnings"])
+        std::cerr << "warning: " << warning.get<std::string>() << '\n';
 }
 } // namespace
 int main(int argc, char **argv) {
@@ -178,34 +227,9 @@ int main(int argc, char **argv) {
             if (display) {
                 if (json_output || args[0] == "rpc" || args[0] == "rpc-shell")
                     std::cout << value.dump() << std::endl;
-                else if (method == "devices") {
-                    std::cout << "List of iOS devices attached\n";
-                    for (const auto &device : value["result"]["devices"]) {
-                        auto udid = device.value("udid", std::string());
-                        std::cout << (udid.empty() ? "(unidentified)" : udid) << "\t"
-                                  << device.value("state", std::string("discovered"));
-                        if (long_output) {
-                            std::cout << " name:" << device.value("name", std::string())
-                                      << " pairing:" << device.value("pairing", std::string("unknown"))
-                                      << " connection:" << device.value("connection", std::string("unverified"));
-                        }
-                        std::cout << '\n';
-                        if (long_output)
-                            for (const auto &candidate : device["candidates"]) {
-                                auto address = candidate["address"].get<std::string>();
-                                if (address.find(':') != std::string::npos)
-                                    address = "[" + address + "]";
-                                std::cout << "  " << candidate["transport"].get<std::string>();
-                                if (!address.empty())
-                                    std::cout << " " << address << ":" << candidate["port"];
-                                std::cout << " interface:" << candidate.value("interface", std::string())
-                                          << " type:" << candidate.value("connection_type", std::string())
-                                          << " pairing:" << candidate.value("pairing", std::string("unknown")) << '\n';
-                            }
-                    }
-                    for (const auto &warning : value["result"]["warnings"])
-                        std::cerr << "warning: " << warning.get<std::string>() << '\n';
-                } else if (method == "pair")
+                else if (method == "devices")
+                    print_devices(value["result"], long_output);
+                else if (method == "pair")
                     std::cout << "Paired: " << value["result"].value("udid", std::string()) << '\n';
                 else
                     std::cout << "OK\n";

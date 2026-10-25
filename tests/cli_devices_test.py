@@ -18,6 +18,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                  port=49152, interface='en0', connection_type='RemotePairing', paired=True,
                  pairing='record_present')])
     devices = [copy.deepcopy(phone)]
+    devices[0]['candidates'].append(dict(transport='wifi', address='10.0.0.7', port=49152,
+                                       interface='en0', connection_type='RemotePairing',
+                                       paired=True, pairing='record_present'))
     cancelled = False
 
     def handle(name, params):
@@ -65,7 +68,23 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     long = run('devices', '-l').stdout
     assert 'mock-iphone\tpaired' in short and 'en0' not in short
     assert 'connection:unverified' in long and '[fe80::1%4]:49152' in long and 'interface:en0' in long
+    assert long.splitlines()[0] == 'List of iOS devices'
+    assert 'name:Test iPhone' in long and 'pairing:record_present' not in long
+    candidates = [line for line in long.splitlines() if line.startswith('  wifi ')]
+    assert len(candidates) == 2 and '10.0.0.7:49152' in candidates[1]
+    assert candidates[0].index('interface:') == candidates[1].index('interface:')
     assert json.loads(run('devices', '--json').stdout)['result']['devices'] == devices
+    saved_device = copy.deepcopy(devices[0])
+    devices[0]['name'] = ''
+    devices[0]['candidates'][0]['interface'] = ''
+    devices[0]['candidates'][0]['connection_type'] = ''
+    devices[0]['candidates'][1]['pairing'] = 'incomplete_record'
+    details = run('devices', '-l').stdout
+    assert 'name:' not in details and 'pairing:incomplete_record' in details
+    empty_fields = next(line for line in details.splitlines() if '[fe80::1%4]' in line)
+    assert 'interface:' not in empty_fields and 'type:' not in empty_fields
+    assert json.loads(run('devices', '-l', '--json').stdout)['result']['devices'] == devices
+    devices[0] = saved_device
     target = str(Path(tmp) / 'screen.png')
     run('screenshot', target, '--wifi')
     assert Path(target).read_bytes().startswith(b'\x89PNG')
