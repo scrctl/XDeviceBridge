@@ -2,6 +2,21 @@
 
 [English](INSTALL.md) | 简体中文
 
+## Homebrew（macOS 和 Linux）
+
+```sh
+brew install scrctl/tap/xdb
+# 安装桌面前端时会自动安装 xdb：
+brew install scrctl/tap/scrctl
+```
+
+[官方 tap](https://github.com/scrctl/homebrew-tap) 构建固定版本源码，并提供
+macOS 15 ARM64 与 Linux x86-64 的 bottle；其他支持的平台从源码构建。
+Bottle 与公证发布 ZIP 是不同构建。不安装登录服务，客户端按需启动 xdb。
+
+从用户目录运行包切换时，先用 `xdb kill-server` 停止旧 Server，再移除 PATH
+中的旧命令链接。配对数据和 DDI 缓存独立于程序安装目录，应保留。
+
 ## 桌面运行包
 
 从 [GitHub Releases](https://github.com/scrctl/XDeviceBridge/releases) 下载适合操作系统和 CPU 架构的运行包。

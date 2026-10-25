@@ -2,6 +2,23 @@
 
 English | [简体中文](INSTALL_zh.md)
 
+## Homebrew (macOS and Linux)
+
+```sh
+brew install scrctl/tap/xdb
+# The desktop frontend installs xdb automatically:
+brew install scrctl/tap/scrctl
+```
+
+The [official tap](https://github.com/scrctl/homebrew-tap) builds pinned release
+sources and provides bottles for macOS 15 ARM64 and Linux x86-64. Other supported
+hosts build from source. Bottles are separate builds from the notarized release
+ZIPs. No login service is installed; clients start xdb on demand.
+
+When switching from a user-local package, stop the old server with `xdb kill-server`
+and remove its old command link from PATH. Pairing data and DDI caches are separate
+from the runtime installation and should be retained.
+
 ## Desktop runtime packages
 
 Download the runtime archive for your operating system and CPU from
