@@ -522,3 +522,35 @@ Both test-only servers were stopped; the existing default server was retained.
 The device was left with its DDI installed and mounted. These results cover this
 Debian ARM64 VM, existing trust records and the stated device, not other Linux
 distributions or iOS models.
+
+## Android NSD subscription acceptance (2026-10-27)
+
+The Android adapter introduced in `a7f1826` was built with NDK 29/API 26 and
+compiled into the scrctl-android debug App (compile/target SDK 36). The real host
+was a Xiaomi 13 Ultra/API 36, using its existing App-private pairing record for
+iPhone14,4 / iOS 27.0.1. The App, not a shell executable, loaded the embedded
+server. No credentials were imported, replaced or printed; no DDI mutation was
+performed in this test.
+
+Five on-device instrumentation tests passed, covering independent server ports,
+interruption/close races, repeated controller lifecycle/network-state transitions,
+the native NSD adapter, and an opt-in iPhone stream test. The NSD test registered
+an ephemeral `_remotepairing._tcp.` service, observed its resolved callback in the
+adapter and its endpoint in the native `devices` reply. Warm snapshot discovery
+returned in under two seconds instead of waiting the requested three seconds.
+Unregistering the test service removed it; multiple leases shared the subscription
+and the last close cleared it. A new lease did not resurrect the lost test peer.
+
+The iPhone test identified the existing paired phone through the NSD snapshot,
+opened a Wi-Fi session and received three advancing, decoded BGRA frames, then
+stopped video and closed the session. The App UI separately discovered the phone
+and displayed its visible lock-screen image in the fullscreen mirror. Android's
+service-discovery diagnostics showed only the intended remote-pairing browse and
+service-info subscriptions for the App UID on its Wi-Fi network. Backgrounding
+the App released its active NSD requests; foregrounding recreated them.
+
+This validates native discovery, the existing-pairing connection and video on
+this device. Pairing advertisements retain direct mDNS and were not re-paired.
+API 24–33 fallback, physical network switching, simultaneous Ethernet/Wi-Fi and
+other Android vendors remain outside this real-device result. The controller
+network-state test simulates lifecycle transitions, not a physical Wi-Fi switch.

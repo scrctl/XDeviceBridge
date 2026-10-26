@@ -244,7 +244,9 @@ target_link_libraries(xdb_core PUBLIC XdbAppleFrameworks OpenSSL::SSL OpenSSL::C
 target_link_libraries(xdb_core PRIVATE pugixml::pugixml xdb_lwip Xdb::Mdns)
 target_link_libraries(xdb_core PRIVATE XdbCurl)
 target_link_libraries(xdb_core PUBLIC Xdb::Threading)
-if(APPLE)
+if(ANDROID)
+    target_sources(xdb_core PRIVATE src/wifi/AndroidNsd.cpp src/wifi/AndroidNsdRecords.cpp)
+elseif(APPLE)
     # DNS-SD symbols are re-exported by the implicitly linked libSystem.
     target_sources(xdb_core PRIVATE src/wifi/Bonjour.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
@@ -398,6 +400,9 @@ endif()
 
 if(XDB_BUILD_TESTS AND XDB_BUILD_SERVER AND UNIX)
     target_sources(xdb_wifi_test PRIVATE tests/pair_setup_reply_test.cpp)
+    add_executable(xdb_android_nsd_test tests/android_nsd_test.cpp src/wifi/AndroidNsdRecords.cpp)
+    target_link_libraries(xdb_android_nsd_test PRIVATE xdb_core)
+    add_test(NAME xdb_android_nsd COMMAND xdb_android_nsd_test)
     if(APPLE)
         add_executable(xdb_bonjour_test tests/bonjour_test.cpp src/wifi/Bonjour.cpp)
         target_compile_definitions(xdb_bonjour_test PRIVATE
