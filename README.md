@@ -122,7 +122,8 @@ xdb -s '<UDID>' screenshot screen.png --wifi
 addresses, network interfaces and pairing/connection details. `--json` retains the
 complete structured response. Empty names and endpoint fields are omitted from
 text output. Candidate pairing reasons are shown only when they differ from the
-device's pairing summary. States have distinct meanings:
+device's pairing summary; the unchecked USB `unknown` reason is omitted.
+States have distinct meanings:
 
 | State | Meaning |
 | --- | --- |

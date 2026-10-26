@@ -74,12 +74,15 @@ void print_devices(const Json &result, bool detailed) {
             auto interface_name = candidate.value("interface", std::string());
             auto type = candidate.value("connection_type", std::string());
             auto candidate_pairing = candidate.value("pairing", std::string("unknown"));
-            const bool show_pairing = !candidate_pairing.empty() && candidate_pairing != pairing;
+            const bool unchecked_usb = candidate.value("transport", std::string()) == "usb" &&
+                                       candidate_pairing == "unknown";
+            const bool show_pairing = !unchecked_usb && !candidate_pairing.empty() &&
+                                      candidate_pairing != pairing;
             std::cout << "  " << label;
             if (!interface_name.empty() || !type.empty() || show_pairing)
                 std::cout << std::string(width - label.size(), ' ');
-            if (!interface_name.empty()) std::cout << "  interface:" << interface_name;
             if (!type.empty()) std::cout << "  type:" << type;
+            if (!interface_name.empty()) std::cout << "  interface:" << interface_name;
             if (show_pairing) std::cout << "  pairing:" << candidate_pairing;
             std::cout << '\n';
         }
