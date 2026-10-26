@@ -23,7 +23,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build nasm patchelf zlib1g-dev
+          sudo apt-get install -y ninja-build nasm patchelf zlib1g-dev libavahi-client-dev
       - name: macOS tools
         if: runner.os == 'macOS'
         run: brew install ninja pkg-config

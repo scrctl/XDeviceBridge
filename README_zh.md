@@ -64,6 +64,14 @@ macOS 的设备发现和临时 Wi-Fi 配对广播优先使用系统 Bonjour，�
 直接 mDNS。发现超时仍用于收集一次新快照；这一步尚未增加 Server 持久设备缓存，
 也不代表已经验证设备可连接。
 
+Linux 构建时若有 Avahi 开发头文件（Debian/Ubuntu 的 `libavahi-client-dev`），
+也会优先通过系统 Avahi 服务发现设备和广播配对主机。服务端按需加载 Avahi 客户端库；
+库、后台服务或系统总线不可用时回退到直接 mDNS。仅构建客户端无需 Avahi，
+xdb 不修改系统 mDNS 配置，也不要求 root 权限。
+
+重新构建服务端后，若旧后台仍在运行，请先执行 `./build/xdb kill-server` 和
+`./build/xdb start-server` 再测试。替换磁盘上的程序不会更新现有后台进程的代码。
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4
@@ -112,7 +120,8 @@ xdb -s '<UDID>' screenshot screen.png --wifi
 
 `devices` 为每个发现的设备输出一行；`devices -l` 额外显示名称、地址、网络接口以及
 配对和连接详情。文本输出省略空名称和空端点字段，候选端点的配对原因仅在与设备
-汇总状态不同时显示。`--json` 保留完整的结构化响应。设备状态的含义如下：
+汇总状态不同时显示；USB 未检查的 `unknown` 配对原因不显示。
+`--json` 保留完整的结构化响应。设备状态的含义如下：
 
 | 状态 | 含义 |
 | --- | --- |

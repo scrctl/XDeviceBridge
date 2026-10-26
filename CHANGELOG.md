@@ -5,6 +5,9 @@
 - Use system Bonjour for macOS device discovery and temporary Wi-Fi pairing
   advertisements, with direct mDNS as a startup fallback. Keep existing pairing
   records, advertisement identity, discovery budgets and SDK contracts.
+- Add an optional Linux Avahi backend with runtime library loading and direct
+  mDNS fallback. Preserve pairing records and avoid adding Avahi dependencies to
+  lightweight clients.
 
 ## 1.0.1 — 2026-10-26
 

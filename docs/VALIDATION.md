@@ -291,3 +291,81 @@ stay capturable on this device.
 The host Mac itself could not complete Wi-Fi sessions on this LAN
 (unicast to the device returned host-unreachable while ICMP passed); Wi-Fi
 transport evidence above was collected from the Windows VM instead.
+
+## macOS Wi-Fi pairing from the native DNS-SD checkout (2026-10-26)
+
+The operator built `xdb` on macOS from `codex/avahi-mdns`, based on the Bonjour
+implementation and link fix at `c476333`, and ran `./xdb pair` without an address
+or USB option. The phone discovered the `xdb - <hostname>` pairing host, accepted
+the one-use PIN, and xdb reconnected to verify the new Wi-Fi pairing record before
+reporting `Paired` with the expected device UDID.
+
+This is operator-provided real-device evidence for the macOS pairing, reconnect
+and record-persistence path with the native backend enabled. Backend selection
+was not traced during the run. The earlier host-unreachable observation above
+therefore no longer describes this later pairing attempt; media and input
+sessions remain covered by the separate results above.
+
+## Linux Avahi discovery and advertisement (2026-10-26)
+
+Debian 13.7 ARM64 in a Parallels VM, with a bridged LAN interface and Avahi 0.8,
+built source at `6d8ad99` plus the owner-name normalization fix `7ad229f`.
+The CLI and server ran as an ordinary desktop user with a separate test data
+directory; existing pairing records and system network configuration were
+preserved.
+
+- `xdb_avahi`, `xdb_dns_sd` and `xdb_discovery` passed inside the VM.
+- The first real discovery run exposed Avahi's owner names without a trailing
+  root dot. After normalizing them at the native adapter boundary, `devices
+  --wifi -l` listed the phone at IPv4 `10.24.24.7:49152` and its scoped IPv6
+  link-local endpoint on `enp0s5`. With an empty test pairing store it correctly
+  reported `discovered`, without inventing a UDID or claiming connectivity.
+- Runtime tracing confirmed loading `libavahi-client.so.3`, connection to the
+  system bus, and native `RecordBrowserNew` requests. The server's ELF `NEEDED`
+  list contains neither Avahi nor D-Bus libraries.
+- Pairing used native `EntryGroupNew`, five `AddRecord` calls and `Commit`.
+  `avahi-browse` resolved the UUID instance and matching UUID hostname with the
+  real listening port and the expected pairing TXT fields. Capture on the guest
+  interface observed IPv4/IPv6 multicast announcements and service queries from
+  the iPhone. During the advertisement, xdb owned no UDP discovery socket.
+
+- The operator selected `xdb - YJBeetle-M2-Debian` on the iPhone and entered the
+  displayed one-use PIN. The CLI reconnected to verify the new Wi-Fi record and
+  returned `Paired` with the expected device UDID. A subsequent Wi-Fi discovery
+  returned `paired` with both address families. The data directory had mode
+  `0700` and the saved record mode `0600`; the temporary pairing advertisement
+  disappeared after the operation.
+- The old default-port server was still running an earlier build, so an ordinary
+  CLI initially showed stale behavior despite rebuilding the executable. After
+  restarting that server, the verified test record was copied atomically to the
+  default user directory with no-replace semantics. Ordinary `devices --wifi -l`
+  then returned the paired device. The test-only server and monitor were stopped.
+
+This verifies Avahi discovery, pairing advertisement, the phone-initiated PIN
+handshake, post-pairing verification and record persistence on the stated setup.
+USB is outside this acceptance record.
+
+## Linux USB passthrough (2026-10-26)
+
+The same Debian VM and build above were tested with iPhone14,4 / iOS 27.0.1
+attached by Parallels USB passthrough. Linux initially exposed the PTP interface,
+but the already-running usbmuxd had logged `LIBUSB_ERROR_NO_DEVICE` during device
+initialization and returned no USB devices. Restarting the existing Debian
+usbmuxd service restored its device connection; no xdb code, USB configuration
+or pairing records were changed to recover enumeration.
+
+- As the ordinary desktop user, `devices --usb -l` listed the expected UDID and
+  `pair --usb` successfully verified the existing USB trust record. This was
+  record reuse, not a new trust-prompt acceptance test.
+- `screenshot --usb` returned a valid 1125×2436 PNG.
+- A C ABI client explicitly opened `transport: "usb"`, read the device model
+  and OS version, and started video with software decoding. Three BGRA responses
+  had advancing serials (1, 33, 44), dimensions 1136×2464, and exactly
+  `4544 × 2464 = 11196416` payload bytes each. `video.stop` and
+  `connection.close` succeeded afterward.
+- usbmuxd reported no new transfer errors during these checks.
+
+This validates USB discovery, existing-record verification, device information,
+screenshot and decoded video on this VM setup. It does not establish long-term
+USB stability or identify the cause of the initial passthrough initialization
+failure. DDI mounting and input injection were not exercised in this run.

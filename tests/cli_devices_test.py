@@ -21,6 +21,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     devices[0]['candidates'].append(dict(transport='wifi', address='10.0.0.7', port=49152,
                                        interface='en0', connection_type='RemotePairing',
                                        paired=True, pairing='record_present'))
+    devices[0]['candidates'].append(dict(transport='usb', address='', port=0,
+                                       interface='', connection_type='USB',
+                                       paired=False, pairing='unknown'))
     cancelled = False
 
     def handle(name, params):
@@ -73,6 +76,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     candidates = [line for line in long.splitlines() if line.startswith('  wifi ')]
     assert len(candidates) == 2 and '10.0.0.7:49152' in candidates[1]
     assert candidates[0].index('interface:') == candidates[1].index('interface:')
+    assert all(line.index('type:') < line.index('interface:') for line in candidates)
+    usb = next(line for line in long.splitlines() if line.startswith('  usb '))
+    assert 'type:USB' in usb and 'pairing:' not in usb
     assert json.loads(run('devices', '--json').stdout)['result']['devices'] == devices
     saved_device = copy.deepcopy(devices[0])
     devices[0]['name'] = ''
