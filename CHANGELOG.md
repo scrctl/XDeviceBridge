@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.0.1 — 2026-10-26
+
+### Fixes
+
+- Save new Wi-Fi pairing records with atomic no-replace rename on Linux and
+  Android. Android application sandboxes can reject the hard links previously
+  used to publish records; existing records and symlinks remain protected from
+  replacement, and filesystem errors now retain their actual cause.
+- Fix MSVC builds of the server core, including warning options and missing
+  declarations.
+- Collect release attachments recursively so the publishing workflow accepts
+  nested artifact directories.
+
+### Command line and documentation
+
+- Show a concise command summary and provide command-specific help without
+  contacting or starting a server.
+- Simplify device listings, omit empty fields and repeated pairing labels, and
+  align candidate addresses in detailed output. JSON output is unchanged.
+- Document the official Homebrew tap and migration from manual installations.
+- Record Windows USB/Wi-Fi and MaaFramework C ABI device validation.
+
+C ABI 1 and local RPC protocol 1 are unchanged. Pairing records remain compatible
+with 1.0.0. Native system discovery backends are planned after this release.
+
 ## 1.0.0 — 2026-10-25
 
 First stable integration baseline: C ABI 1 and local RPC protocol 1.
