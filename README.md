@@ -63,6 +63,10 @@ The server loads the Avahi client library only when needed; a missing library,
 daemon or system-bus connection falls back to direct mDNS. Client-only builds do
 not need Avahi. xdb does not change system mDNS configuration or require root.
 
+After rebuilding the server, restart an already running daemon with
+`./build/xdb kill-server` and `./build/xdb start-server` before testing. Replacing
+the binary does not update the code in an existing background process.
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4

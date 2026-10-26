@@ -69,6 +69,9 @@ Linux 构建时若有 Avahi 开发头文件（Debian/Ubuntu 的 `libavahi-client
 库、后台服务或系统总线不可用时回退到直接 mDNS。仅构建客户端无需 Avahi，
 xdb 不修改系统 mDNS 配置，也不要求 root 权限。
 
+重新构建服务端后，若旧后台仍在运行，请先执行 `./build/xdb kill-server` 和
+`./build/xdb start-server` 再测试。替换磁盘上的程序不会更新现有后台进程的代码。
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4

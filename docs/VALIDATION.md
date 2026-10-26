@@ -311,8 +311,8 @@ sessions remain covered by the separate results above.
 Debian 13.7 ARM64 in a Parallels VM, with a bridged LAN interface and Avahi 0.8,
 built source at `6d8ad99` plus the owner-name normalization fix `7ad229f`.
 The CLI and server ran as an ordinary desktop user with a separate test data
-directory; the existing desktop pairing store and system network configuration
-were left unchanged.
+directory; existing pairing records and system network configuration were
+preserved.
 
 - `xdb_avahi`, `xdb_dns_sd` and `xdb_discovery` passed inside the VM.
 - The first real discovery run exposed Avahi's owner names without a trailing
@@ -329,5 +329,18 @@ were left unchanged.
   interface observed IPv4/IPv6 multicast announcements and service queries from
   the iPhone. During the advertisement, xdb owned no UDP discovery socket.
 
-Phone-initiated PIN entry, post-pairing verification and persistence remain to
-be accepted for this Linux run. USB is outside this acceptance record.
+- The operator selected `xdb - YJBeetle-M2-Debian` on the iPhone and entered the
+  displayed one-use PIN. The CLI reconnected to verify the new Wi-Fi record and
+  returned `Paired` with the expected device UDID. A subsequent Wi-Fi discovery
+  returned `paired` with both address families. The data directory had mode
+  `0700` and the saved record mode `0600`; the temporary pairing advertisement
+  disappeared after the operation.
+- The old default-port server was still running an earlier build, so an ordinary
+  CLI initially showed stale behavior despite rebuilding the executable. After
+  restarting that server, the verified test record was copied atomically to the
+  default user directory with no-replace semantics. Ordinary `devices --wifi -l`
+  then returned the paired device. The test-only server and monitor were stopped.
+
+This verifies Avahi discovery, pairing advertisement, the phone-initiated PIN
+handshake, post-pairing verification and record persistence on the stated setup.
+USB is outside this acceptance record.
