@@ -63,6 +63,13 @@ The server loads the Avahi client library only when needed; a missing library,
 daemon or system-bus connection falls back to direct mDNS. Client-only builds do
 not need Avahi. xdb does not change system mDNS configuration or require root.
 
+Windows uses the system DNS-SD APIs from `dnsapi.dll` for device discovery. The
+APIs are loaded at runtime; unavailable APIs or native startup failures fall back
+to direct mDNS. Pairing advertisements retain direct mDNS so the UUID hostname
+and all address records are published together. No Bonjour installation is required.
+Like the macOS/Linux backends, discovery collects one bounded snapshot; it does
+not yet maintain a persistent device list or verify connectivity.
+
 After rebuilding the server, restart an already running daemon with
 `./build/xdb kill-server` and `./build/xdb start-server` before testing. Replacing
 the binary does not update the code in an existing background process.

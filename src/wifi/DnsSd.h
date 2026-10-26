@@ -15,6 +15,12 @@ struct ResourceRecord {
 std::vector<uint8_t> dns_name_data(std::string_view name);
 std::vector<uint8_t> record_packet(const ResourceRecord &record);
 std::vector<ResourceRecord> host_resource_records(const HostRecords &records, std::string &error);
+struct NativeInterface {
+    uint32_t index = 0;
+    uint32_t ipv6_index = 0;
+    std::string name;
+};
+std::vector<NativeInterface> native_interfaces(std::vector<std::string> &warnings);
 std::vector<std::pair<uint32_t, HostRecords>> local_host_records(
     const HostAdvertisement &host, std::string &error);
 

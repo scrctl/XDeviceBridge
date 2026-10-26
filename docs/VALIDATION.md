@@ -369,3 +369,49 @@ This validates USB discovery, existing-record verification, device information,
 screenshot and decoded video on this VM setup. It does not establish long-term
 USB stability or identify the cause of the initial passthrough initialization
 failure. DDI mounting and input injection were not exercised in this run.
+
+## Windows native DNS-SD discovery (2026-10-26)
+
+Windows ARM64 build 26100.9711 in a Parallels VM built the Windows DNS-SD adapter
+with MSYS2 CLANGARM64 (Clang 22.1.8). The iPhone was iPhone14,4 / iOS 27.0.1.
+
+- The Windows DNS-SD and CLI device-list tests passed inside the VM. Coverage
+  includes PTR-only browse replies followed by resolution, separate IPv4/IPv6
+  interface indices, TTL-zero removal, unrelated service types, missing APIs,
+  and callbacks that complete after cancellation or the discovery deadline.
+- A probe called `detail::windows_browse` directly, bypassing the raw fallback.
+  It reported the native provider available and returned the phone's IPv4 address
+  and IPv6 link-local address with the correct scope. Real API calls showed that
+  queries with a trailing root dot were accepted but returned no results on this
+  Windows build; undotted API queries worked. Cache names remain absolute.
+- An experimental `DnsServiceRegister` advertisement returned success and was
+  visible from macOS with the expected UUID service instance, UUID SRV target,
+  listener port and all seven TXT properties. The UUID target did not resolve to
+  an A/AAAA address from macOS during the test, and selecting the host on the
+  phone did not establish a pairing TCP connection. This is not accepted as a
+  working native advertisement. The experimental advertiser was removed;
+  Windows pairing publication retains the existing complete direct-mDNS records.
+- With direct publication restored, the operator completed PIN pairing. xdb
+  reconnected to verify the new record in a separate test data directory; native
+  discovery then matched it as `paired` and retained both address families.
+  Explicit Wi-Fi connection, `device.info` and a 1125×2436 PNG screenshot worked.
+- A first video start after the screenshot encountered a display-service HTTP/2
+  handshake disconnect. A fresh session using an explicit Wi-Fi address started
+  software decoding and returned three advancing BGRA frames (1136×2464,
+  `4544 × 2464 = 11196416` bytes each), then stopped and closed normally.
+  A separate fresh session using native auto-discovery also started video and
+  returned advancing frames with the same checked geometry and byte counts.
+
+The Apple USB composite device initially reported Code 10; restarting that device
+did not clear it. After the operator physically unplugged and reconnected the
+iPhone to the Windows VM, its USB device status became `OK`. The same build then
+passed USB enumeration, verification of the existing USB trust record, a
+1125×2436 PNG screenshot, and an explicitly USB C ABI session returning device
+information and three advancing decoded video frames (serials 1, 25, 50).
+Each BGRA response had the same checked geometry and 11196416-byte payload as
+the Wi-Fi tests. Video stopped and the session closed normally.
+
+The test-only server was stopped afterward. No system firewall policy or
+existing pairing records were changed. Native Windows advertisement
+compatibility, long-term stability, and other Windows versions remain outside
+this result.
