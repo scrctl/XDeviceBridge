@@ -159,7 +159,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     if (cancel())
         return Reply::failure("cancelled", "Request cancelled");
     if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare" ||
-        method == "ddi.status" || method == "ddi.unmount")
+        method == "ddi.status" || method == "ddi.remove")
         return handle_management(method, p, event, cancel);
     if (method == "connection.close" || method == "connection.attach" || method == "connection.open")
         return handle_connection(method, p, cancel);
@@ -563,7 +563,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         r.result = {{"build", image->build}, {"cache_hit", image->cache_hit}};
         return r;
     }
-    if (method == "ddi.prepare" || method == "ddi.status" || method == "ddi.unmount") {
+    if (method == "ddi.prepare" || method == "ddi.status" || method == "ddi.remove") {
         PrepareOptions o;
         o.serial = p.at("udid").get<std::string>();
         o.wifi = p.value("wifi", std::string());
@@ -579,7 +579,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         o.data_directory = directory_;
         o.wifi_port = uint16_t(bounded(p, "port", 49152, 1, 65535));
         if (method != "ddi.prepare") {
-            auto result = manage_ddi(o, method == "ddi.unmount", error, cancel);
+            auto result = manage_ddi(o, method == "ddi.remove", error, cancel);
             if (!result)
                 return fail(error);
             Reply r;

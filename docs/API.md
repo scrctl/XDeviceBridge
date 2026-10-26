@@ -195,36 +195,55 @@ video/audio/input services; see DDI/device validation documentation.
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
 
 No device session needed; requires an exclusive device lease, so close existing
-sessions first. Connects to the device and queries mobile_image_mounter without
-downloading, signing, mounting or comparing against a download catalog. Result:
+sessions first. Connects and queries the image mounter plus installed DDI Cryptex
+metadata when that service is advertised. Does not download, sign, install,
+remove or compare against a download catalog. Result:
 `{udid:string,os_version:string,kind:string,image_type:string,mounted:bool,
-verification:string}`. `kind` is the OS-selected category (`classic`,
-`personalized`, `cryptex`), not the mounted image's build or identity.
-`image_type` is the queried service type (`Developer` or `Personalized`; Cryptex
-also appears as `Personalized`). `verification` reports `LookupImage signature`
-or `CopyDevices entry` when mounted, otherwise an empty string. This observes
-mount evidence, not compatibility with a particular downloaded image.
+verification:string,cryptex_installed:bool|null,cryptex_identifier:string,
+cryptex_version:string}`.
 
-Connection preparation, service opening and service queries each use bounded
-30-second budgets and support cancellation. Unverifiable replies and transport
-failures return `operation_failed`, never a fabricated `mounted:false`.
-An occupied device returns `device_busy`.
+`kind` is the OS-selected download category (`classic`, `personalized`, `cryptex`),
+not the mounted image's build or identity. `image_type` is the queried service
+image type (`Developer` or `Personalized`; Cryptex also appears as `Personalized`).
+`verification` reports `LookupImage signature` or `CopyDevices entry` when mounted,
+otherwise an empty string. This observes mount evidence, not compatibility with
+any particular downloaded image.
 
-### `ddi.unmount`
+`cryptex_installed` is independently queried through `cryptexd`; an installed DDI
+can exist without a current mount. Its identifier and version are included only
+when installed (otherwise empty strings). If the service is not advertised,
+`cryptex_installed` is null; it is not a negative query result. A Cryptex OS target
+requires that query to be available and otherwise fails. Modern USB connections
+also establish RSD to inspect the actual installation, independent of OS download
+policy. Connection stages and the shared query/removal phase have bounded
+30-second budgets and support cancellation. Unverifiable replies or failed
+queries return `operation_failed`, never fabricated absence. An occupied device
+returns `device_busy`.
+
+### `ddi.remove`
 
 Parameters and exclusive lease requirements are the same as `ddi.status`.
-Unmounts the OS category's developer mount (`/Developer` for Classic,
-`/System/Developer` for Personalized/Cryptex) and verifies it is absent. An already
-absent image succeeds without sending `UnmountImage`. Returns the same status
-fields with `mounted:false`, empty `verification`, and `changed:bool`: true only
-when this request removed a mounted image and verified its absence.
+Reverses device preparation without deleting pairing records or host caches:
 
-Does not delete host caches, remove an installed Cryptex or roll a personalization
-nonce. Use `ddi.prepare` to mount again; an installed Cryptex may require explicit
-`replace:true` to reinstall. A phone can reject the unmount or remount an image;
-success is a snapshot of the verified state. Cancellation or a lost reply may
-follow a device-side change: check `ddi.status` before retrying. No automatic
-retry or rollback is performed.
+- If `cryptexd` reports `com.apple.MobileAsset.DDI`, sends `uninstall` scoped to
+  its reported installed version and verifies no DDI installation remains.
+  Does not remove unrelated Cryptexes or guess a version from the download catalog.
+- Otherwise, unmounts the Classic/Personalized image through the image mounter
+  (`/Developer` or `/System/Developer`) and verifies its absence. This also handles
+  an image-mounter DDI on a Cryptex-capable system.
+
+An already absent DDI succeeds without a removal mutation. After removal, verifies
+mount absence and rechecks the Cryptex installation where available. A remaining
+mount after Cryptex removal is an error, not permission to try a second removal
+mechanism. Returns the status fields above with `mounted:false`, no installed
+Cryptex reported, empty verification/identifier/version, plus `changed:bool`.
+`changed:true` means this request performed removal and verified the result.
+
+Does not roll a personalization nonce, download assets or uninstall applications.
+Use `ddi.prepare` to prepare the device again. This reverses DDI preparation's
+result; it does not restore an image that an earlier `prepare --replace` replaced.
+Cancellation or a lost reply can follow a device-side change: query `ddi.status`
+before retrying. No automatic retry or rollback is performed.
 
 ## Connections and display
 

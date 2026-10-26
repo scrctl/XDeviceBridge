@@ -2,11 +2,10 @@
 
 ## Unreleased
 
-- Add `xdb ddi status` and `xdb ddi unmount`, with USB/Wi-Fi selection and JSON
-  output. Query mount evidence without downloads; verify explicit unmounts and
-  treat already absent images as success. Preserve host caches and installed
-  Cryptex assets.
-
+- Add `xdb ddi status` and `xdb ddi remove`, with USB/Wi-Fi selection and JSON
+  output. Query mount and Cryptex installation state independently; reverse device
+  preparation by uninstalling the reported DDI Cryptex or unmounting the image.
+  Verify absence and preserve pairing records, host caches and unrelated Cryptexes.
 - Use system Bonjour for macOS device discovery and temporary Wi-Fi pairing
   advertisements, with direct mDNS as a startup fallback. Keep existing pairing
   records, advertisement identity, discovery budgets and SDK contracts.

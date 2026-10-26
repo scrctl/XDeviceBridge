@@ -196,8 +196,8 @@ int main(int argc, char **argv) {
             throw std::invalid_argument("Unknown command; run xdb --help");
         if (args[0] == "ddi") {
             if (args.size() != 2 ||
-                (args[1] != "prepare" && args[1] != "status" && args[1] != "unmount"))
-                throw std::invalid_argument("Expected ddi prepare/status/unmount; run xdb ddi --help");
+                (args[1] != "prepare" && args[1] != "status" && args[1] != "remove"))
+                throw std::invalid_argument("Expected ddi prepare/status/remove; run xdb ddi --help");
             if (args[1] != "prepare" && (replace || !cache.empty()))
                 throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
         }
@@ -248,9 +248,16 @@ int main(int argc, char **argv) {
                                   << " (" << state.at("udid").get<std::string>() << ")\n";
                     else
                         std::cout << "DDI not mounted: " << state.at("udid").get<std::string>() << '\n';
-                } else if (method == "ddi.unmount")
-                    std::cout << (value["result"].at("changed").get<bool>() ? "DDI unmounted: "
-                                                                          : "DDI already unmounted: ")
+                    const auto installed = state.value("cryptex_installed", Json(nullptr));
+                    if (installed == true)
+                        std::cout << "DDI Cryptex installed: " << state.at("cryptex_identifier").get<std::string>()
+                                  << " " << state.at("cryptex_version").get<std::string>() << '\n';
+                    else
+                        std::cout << "DDI Cryptex: " << (installed.is_null() ? "unavailable" : "not installed")
+                                  << '\n';
+                } else if (method == "ddi.remove")
+                    std::cout << (value["result"].at("changed").get<bool>() ? "DDI removed: "
+                                                                          : "DDI already absent: ")
                               << value["result"].at("udid").get<std::string>() << '\n';
                 else
                     std::cout << "OK\n";

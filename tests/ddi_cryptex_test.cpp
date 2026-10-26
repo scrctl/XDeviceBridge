@@ -1,6 +1,7 @@
 #include "ddi/Cryptex.h"
 #include "http2/Framing.h"
 #include "remote/RemoteXpc.h"
+#include <algorithm>
 #include <cstdio>
 #include <deque>
 #include <sstream>
@@ -90,6 +91,68 @@ void transfers() {
     check(!channel->send_file_transfer(9, 2, too_short, 1000, {}, {}, error), "short upload file fails without retrying");
     check(!channel->send_request(reply, true, error), "partial attachment makes channel unusable");
 }
+void removals() {
+    using Entry = std::pair<std::string, std::string>;
+    const Entry ddi_entry{"com.apple.MobileAsset.DDI", "27.1.5228.8"};
+    const Entry other{"com.apple.other.cryptex", "99"};
+    std::vector<Entry> installed{other};
+    std::vector<std::string> calls;
+    bool reject = false, retain = false, break_verification = false, malformed = false;
+    int queries = 0;
+    auto invoke = [&](std::string_view routine, const xpc::Value &argv, xpc::Value &out,
+                      std::string &error) {
+        calls.emplace_back(routine);
+        if (routine == "copy-installed") {
+            ++queries;
+            if (break_verification && queries > 1) { error = "Disconnected"; return false; }
+            out = xpc::make_dict();
+            auto array = xpc::make_array();
+            for (const auto &[id, version] : installed) {
+                auto entry = xpc::make_dict();
+                xpc::dict_set(entry, "remote-cryptex-identifier", xpc::make_string(id));
+                xpc::dict_set(entry, "remote-cryptex-version", xpc::make_string(version));
+                xpc::array_push(array, std::move(entry));
+            }
+            xpc::dict_set(out, "remote-cryptex-array", malformed ? xpc::make_string("invalid") : array);
+            return true;
+        }
+        check(routine == "uninstall" && argv.at("remote-cryptex-identifier").string == ddi_entry.first &&
+              argv.at("remote-cryptex-version").string == ddi_entry.second && argv.dict.size() == 2,
+              "removal targets only the DDI identifier at its live installed version");
+        if (reject) { error = "ImageBusy"; return false; }
+        if (!retain) installed.erase(std::remove(installed.begin(), installed.end(), ddi_entry), installed.end());
+        out = xpc::make_dict();
+        return true;
+    };
+    std::string error;
+    bool changed = true;
+    check(ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed &&
+          calls == std::vector<std::string>{"copy-installed"} && installed == std::vector<Entry>{other},
+          "absent DDI is success without touching another Cryptex");
+    installed.push_back(ddi_entry); calls.clear(); queries = 0;
+    check(ddi::detail::remove_ddi_cryptex(invoke, changed, error) && changed &&
+          calls == std::vector<std::string>{"copy-installed", "uninstall", "copy-installed"} &&
+          installed == std::vector<Entry>{other}, "DDI removal verifies absence and preserves unrelated installations");
+    installed.push_back(ddi_entry); calls.clear(); queries = 0; retain = true;
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed &&
+          error.find("remains installed") != std::string::npos && calls.size() == 3,
+          "successful uninstall reply cannot hide an installed DDI or trigger a retry");
+    reject = true; calls.clear(); queries = 0;
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed && error == "ImageBusy" &&
+          calls.size() == 2, "device rejection is propagated without a retry");
+    reject = false; retain = false; break_verification = true; calls.clear(); queries = 0;
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed && error == "Disconnected" &&
+          installed == std::vector<Entry>{other}, "lost verification cannot claim a successful removal");
+    break_verification = false; installed.push_back(ddi_entry); installed.push_back(ddi_entry); calls.clear(); queries = 0;
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed && calls.size() == 1,
+          "ambiguous installed versions are rejected before mutation");
+    installed.pop_back(); installed.back().second = "bad\nversion"; calls.clear();
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed && calls.size() == 1,
+          "invalid installed version is rejected before mutation");
+    installed.back() = ddi_entry; malformed = true; calls.clear();
+    check(!ddi::detail::remove_ddi_cryptex(invoke, changed, error) && !changed && calls.size() == 1,
+          "malformed installed state is not treated as absence");
+}
 void messages() {
     std::string error;
     std::vector<uint8_t> nonce(56, 7); nonce[52] = 48; nonce[53] = nonce[54] = nonce[55] = 0;
@@ -128,4 +191,4 @@ void messages() {
     check(!ddi::detail::parse_cryptex_metadata(manifest, cinfo, error), "unrelated mount path rejected");
 }
 }
-int main() { transfers(); messages(); return failures ? 1 : 0; }
+int main() { transfers(); messages(); removals(); return failures ? 1 : 0; }

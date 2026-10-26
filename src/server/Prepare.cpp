@@ -303,43 +303,89 @@ bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event
     }
     return true;
 }
-std::optional<Json> manage_ddi(const PrepareOptions &o, bool unmount, std::string &error,
+std::optional<Json> manage_ddi(const PrepareOptions &o, bool remove, std::string &error,
                               const Cancel &cancelled) {
+    using namespace std::chrono;
     DdiTarget connected;
     if (!connected.connect(o, error, cancelled))
         return std::nullopt;
     const auto selected = ddi::select_for_version(connected.target.system_version, error);
     if (!selected)
         return std::nullopt;
-    auto adapter = o.wifi.empty()
-                       ? ddi::ServiceTransport::open_usb(*connected.lockdown, connected.record->device_id,
-                                                         std::chrono::seconds(30), cancelled, error)
-                       : ddi::ServiceTransport::open_remote(*connected.device, std::chrono::seconds(30),
-                                                            cancelled, error);
+    // Modern systems can expose a Cryptex DDI independently of the download
+    // policy. Inspect the actual installation before choosing its removal path.
+    if (selected->kind != ddi::Kind::Classic && !connected.device) {
+        transport::IoBudget preparation({seconds(30), cancelled});
+        connected.device = remote::Device::establish_bounded(connected.record->udid, preparation,
+                                                             error, false, true);
+        if (!connected.device)
+            return std::nullopt;
+    }
+    transport::IoBudget budget({seconds(30), cancelled});
+    auto stopped = [&] { return budget.stopped(); };
+    ddi::CryptexInstallOptions cryptex_options;
+    cryptex_options.timeout = seconds(30);
+    cryptex_options.cancelled = stopped;
+    const bool cryptex_available = connected.device &&
+        connected.device->rsd().has_service("com.apple.security.cryptexd.remote");
+    if (selected->kind == ddi::Kind::Cryptex && !cryptex_available) {
+        error = "Cannot verify DDI installation: device does not advertise cryptexd";
+        return std::nullopt;
+    }
+    std::optional<ddi::CryptexInstallResult> installed;
+    auto query_cryptex = [&] {
+        return !cryptex_available || ddi::query_installed_cryptex(*connected.device, installed,
+                                                                cryptex_options, error);
+    };
+    if (!query_cryptex())
+        return std::nullopt;
+    auto open_mounter = [&] {
+        return o.wifi.empty()
+                   ? ddi::ServiceTransport::open_usb(*connected.lockdown, connected.record->device_id,
+                                                     budget.remaining(), stopped, error)
+                   : ddi::ServiceTransport::open_remote(*connected.device, budget.remaining(), stopped, error);
+    };
+    ddi::MountOptions options;
+    options.timeout = seconds(30);
+    options.cancelled = stopped;
+    bool changed = false;
+    if (remove && installed) {
+        if (!ddi::remove_ddi_cryptex(*connected.device, cryptex_options, changed, error))
+            return std::nullopt;
+        installed.reset();
+    }
+    auto adapter = open_mounter();
     if (!adapter)
         return std::nullopt;
     auto wire = adapter->service();
-    ddi::MountOptions options;
-    options.timeout = std::chrono::seconds(30);
-    options.cancelled = cancelled;
-    bool changed = false;
-    std::optional<ddi::MountResult> mounted;
-    if (unmount) {
+    if (remove && !changed) {
+        // An image-mounter DDI can remain even on a Cryptex-capable OS.
         if (!ddi::unmount_current(wire, selected->kind, options, error, &changed))
             return std::nullopt;
-    } else {
-        // Status observes the mounted image, independent of the download catalog.
-        mounted = ddi::inspect_mounted(wire, selected->kind, options, error);
-        if (!mounted)
-            return std::nullopt;
     }
+    auto mounted = ddi::inspect_mounted(wire, selected->kind, options, error);
+    if (!mounted)
+        return std::nullopt;
+    if (remove) {
+        if (!query_cryptex())
+            return std::nullopt;
+        if (installed || mounted->state != ddi::MountState::NotMounted) {
+            error = "DDI remains installed or mounted after removal";
+            return std::nullopt;
+        }
+    }
+    if (!budget.check(error, "DDI management"))
+        return std::nullopt;
     Json result = {{"udid", o.serial},
                    {"os_version", connected.target.system_version},
                    {"kind", std::string(ddi::kind_name(selected->kind))},
-                   {"image_type", selected->kind == ddi::Kind::Classic ? "Developer" : "Personalized"},
-                   {"mounted", mounted && mounted->state != ddi::MountState::NotMounted},
-                   {"verification", mounted ? mounted->verification : std::string()}};
-    if (unmount)
+                   {"image_type", mounted->image_type},
+                   {"mounted", mounted->state != ddi::MountState::NotMounted},
+                   {"verification", mounted->verification},
+                   {"cryptex_installed", cryptex_available ? Json(bool(installed)) : Json(nullptr)},
+                   {"cryptex_identifier", installed ? installed->identifier : std::string()},
+                   {"cryptex_version", installed ? installed->version : std::string()}};
+    if (remove)
         result["changed"] = changed;
     return result;
 }

@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
                 assert not unknown_input['ok'] and unknown_input['error']['code'] == 'unknown_method', unknown_input
             assert request(c, 'server.info')['ok'], 'rejecting unknown input must retain the RPC connection'
 
-            for method in ('ddi.status', 'ddi.unmount'):
+            for method in ('ddi.status', 'ddi.remove'):
                 for params in ({}, {'udid': ''}, {'udid': 'offline', 'port': 0},
                                {'udid': 'offline', 'port': '49152'}):
                     rejected = request(c, method, params)

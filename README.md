@@ -143,14 +143,15 @@ Listing does not actively connect to devices. `pairing:record_present` never
 means the phone has accepted a new connection. USB trust is not inferred from
 USB enumeration. Unknown device identities appear as `(unidentified)`.
 
-Use `xdb ddi status` to query the device's mounted developer image and
-`xdb ddi unmount` to unmount it and verify removal. Both default to USB; add
-`--wifi` for paired Wi-Fi discovery. Close active device sessions first. Status
-does not download or install; unmount preserves host caches and installed
-Cryptex assets. To reinstall an installed Cryptex after unmounting, use
-`xdb ddi prepare --replace`. Add `--json` for structured results.
+Use `xdb ddi status` to query mount state and the installed DDI Cryptex separately.
+`xdb ddi remove` reverses device preparation: it uninstalls the DDI Cryptex at its
+reported version, or unmounts the Classic/Personalized image, and verifies absence.
+An already absent DDI is success. Pairing records, host caches and other Cryptexes
+are preserved; no nonce roll is requested. Use `xdb ddi prepare` to prepare again.
+Both commands default to USB; add `--wifi` for paired Wi-Fi discovery and `--json`
+for structured results. Close active device sessions first.
 
-For `screenshot`, `ddi prepare`, `ddi status` and `ddi unmount`, omit `-s` when
+For `screenshot`, `ddi prepare`, `ddi status` and `ddi remove`, omit `-s` when
 discovery finds exactly one identified device. `--usb` / `--wifi` constrain that discovery, and an explicit
 Wi-Fi address further selects its matching candidate. Several addresses for the
 same UDID count as one device. Multiple devices, including unidentified ones,
