@@ -415,3 +415,62 @@ The test-only server was stopped afterward. No system firewall policy or
 existing pairing records were changed. Native Windows advertisement
 compatibility, long-term stability, and other Windows versions remain outside
 this result.
+
+## Windows DDI lifecycle acceptance (2026-10-26)
+
+Built the `ba71123` runtime sources in `C:\Workspace\XDeviceBridge\build` on
+Windows ARM64, build 26100.9711, using MSYS2 clangarm64 / Clang 22.1.8. The
+executable was verified as COFF-ARM64. With the test-only fixes `86d4aa0` and
+`837536f`, all 16 Windows CTest cases passed under the machine's GBK locale.
+The fixes explicitly decode UTF-8 documentation and consume the complete fake
+hello request before closing a rejection socket; they do not change the runtime.
+
+The real device was iPhone14,4 / iOS 27.0.1. USB drivers reported OK. Test servers
+used separate loopback ports, retaining existing pairing records. The Windows
+user's default Wi-Fi record was rejected as revoked; Wi-Fi acceptance instead
+used the still-valid record retained from the earlier Windows pairing test in
+`C:\Workspace\xdb-windows-dnssd\runtime\data`. No new pairing was performed.
+
+USB acceptance:
+
+1. `ddi status --usb --json` initially reported `mounted:false` and
+   `cryptex_installed:false`.
+2. `ddi prepare --usb --cache-dir ...` downloaded and verified all five pinned
+   Cryptex assets into `build\validation\ddi-cache`, requested an Apple ticket,
+   uploaded the assets and verified `com.apple.MobileAsset.DDI 27.1.5228.8`.
+3. `ddi remove --usb --json` reported `changed:true`; a separate status query
+   confirmed both the mount and Cryptex installation were absent.
+4. A second removal reported `changed:false` without reinstalling anything.
+5. Preparing again reused the downloaded assets, completed in 15.33 seconds and
+   restored the installed/mounted state. A new screenshot returned a visible
+   1125 x 2436 PNG (193197 bytes).
+
+Wi-Fi acceptance with the verified test record:
+
+1. Status identified the installed DDI and mounted image through paired discovery.
+2. Removal reported `changed:true`; a separate status query confirmed absence.
+3. A second removal reported `changed:false`.
+4. Preparing again reused the Windows cache, requested a ticket and uploaded the
+   image over Wi-Fi. It completed in 39.28 seconds and restored installation and
+   mount state. A new visible PNG was 1125 x 2436 (191856 bytes).
+
+The phone locked during the initial USB preparation: upload finished but the
+installation reply waited until the user unlocked it. That preparation's 229.25
+seconds include download and the lock wait, and are not a throughput baseline.
+Earlier macOS read-only diagnosis likewise found `copy-installed` queued at a
+cryptexd barrier while locked; unlocking restored a successful status reply in
+0.54 seconds. Keep the device unlocked during these DDI tests. This evidence does
+not establish identical lock behavior for every iOS version.
+
+An additional Windows latency observation remains open: several automatic Wi-Fi
+DDI operations took about 31 seconds, although standalone discovery took 3.11
+seconds. The snapshot's IPv4 endpoint preceded its scoped IPv6 endpoint. On the
+same installed image, an explicit IPv4 status query took 1.24 seconds versus
+31.63 seconds with `--wifi auto`; both returned the same state. Specifying
+`--wifi ADDRESS` avoids the observed delay. These timings do not yet identify
+which automatic-connection stage accounts for the difference.
+
+The test servers were stopped. The device was left with the DDI installed and
+mounted. The older default server on port 17423 was not replaced; it still points
+to the desktop's previously installed runtime. These results validate the stated
+build/device/USB/Wi-Fi paths, not a portable Windows package or other iOS models.

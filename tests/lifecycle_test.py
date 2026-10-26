@@ -36,6 +36,25 @@ def listening(port):
         return sock.connect_ex(('127.0.0.1', port)) == 0
 
 
+def receive_hello(connection):
+    # A single recv can return only the header. Closing with unread request
+    # bytes can reset the connection and discard our rejection on Windows.
+    connection.settimeout(3)
+    def exact(size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = connection.recv(size - len(data))
+            if not chunk:
+                raise EOFError('incomplete hello request')
+            data.extend(chunk)
+        return data
+    header = exact(16)
+    assert header[:4] == b'XDB1'
+    version, size, binary = struct.unpack('>III', header[4:])
+    assert version == 1 and 0 < size <= 1024 * 1024 and binary == 0
+    assert json.loads(exact(size))['method'] == 'hello'
+
+
 def run(port, *args, success=True):
     result = subprocess.run([str(exe), '--port', str(port), *args],
                             capture_output=True, text=True, encoding='utf-8', timeout=12)
@@ -125,7 +144,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-lifecycle-') as tmp:
             def reject():
                 connection, _ = other.accept()
                 with connection:
-                    connection.recv(4096)
+                    receive_hello(connection)
                     connection.sendall(b'NOPE' + struct.pack('>III', 1, 2, 0))
             thread = threading.Thread(target=reject)
             thread.start()
@@ -141,7 +160,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-lifecycle-') as tmp:
             def reject_protocol():
                 connection, _ = incompatible.accept()
                 with connection:
-                    connection.recv(4096)
+                    receive_hello(connection)
                     body = json.dumps(dict(id=1, ok=True, result=dict(protocol=2, version='9.0'))).encode()
                     connection.sendall(b'XDB1' + struct.pack('>III', 1, len(body), 0) + body)
             thread = threading.Thread(target=reject_protocol)
