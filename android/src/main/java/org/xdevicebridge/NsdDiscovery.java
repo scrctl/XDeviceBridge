@@ -39,8 +39,9 @@ public final class NsdDiscovery implements AutoCloseable {
     public static synchronized NsdDiscovery acquire(Context context) {
         if (Build.VERSION.SDK_INT >= 34 && shared == null) {
             System.loadLibrary("xdb_server");
-            shared = new Backend(context.getApplicationContext());
-            install(shared);
+            Backend next = new Backend(context.getApplicationContext());
+            try { install(next); shared = next; }
+            catch (RuntimeException | Error error) { next.close(); throw error; }
         }
         ++leases;
         return new NsdDiscovery();

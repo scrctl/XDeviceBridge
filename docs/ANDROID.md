@@ -79,9 +79,11 @@ before additional copies. This needs device profiling. Latest-frame polling boun
 queues; encoded HEVC transport or shared-memory frames can be added later with
 explicit negotiation rather than changing the meaning of BGRA responses.
 
-Local cross-builds validate target compilation/linkage only. There is currently no
-online Android device for app-sandbox, background lifecycle, permission or iPhone
-end-to-end acceptance. Existing MaaFramework Android Native integration supports
+Local cross-builds validate target compilation/linkage only. The NSD adapter and
+embedded server have also been tested in scrctl-android on a Xiaomi 13 Ultra/API
+36 with an existing paired iPhone; see [validation](VALIDATION.md). Other Android
+versions and physical network switching are not covered by that result.
+Existing MaaFramework Android Native integration supports
 loading an application-supplied native library, which is a useful lifecycle precedent;
 its `GetLockedPixels`/`DispatchInputMessage` ABI is not reused or modified here.
 

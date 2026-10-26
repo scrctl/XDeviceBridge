@@ -77,7 +77,9 @@ HEVC 需要 avcodec/avutil/swscale，音频解码还需 swresample。
 未来若增加编码 HEVC 或共享内存帧，应显式协商，不能改变已有 BGRA 响应的含义。
 
 本地交叉构建只验证目标编译和链接。
-目前尚无在线 Android 设备完成应用沙箱、后台生命周期、权限和 iPhone 端到端验收。
+NSD 适配和内嵌 Server 已通过 scrctl-android，在 Xiaomi 13 Ultra／API 36 上使用
+既有配对的 iPhone 验证，详见 [验证记录](VALIDATION.md)。该结果不覆盖其他 Android
+版本或实际网络切换。
 MaaFramework 已有的 Android Native 接入支持加载应用提供的原生库，
 可作为生命周期组织的参考；这里不复用或修改其 `GetLockedPixels`／`DispatchInputMessage` ABI。
 
