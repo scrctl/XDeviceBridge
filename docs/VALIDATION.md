@@ -344,3 +344,28 @@ preserved.
 This verifies Avahi discovery, pairing advertisement, the phone-initiated PIN
 handshake, post-pairing verification and record persistence on the stated setup.
 USB is outside this acceptance record.
+
+## Linux USB passthrough (2026-10-26)
+
+The same Debian VM and build above were tested with iPhone14,4 / iOS 27.0.1
+attached by Parallels USB passthrough. Linux initially exposed the PTP interface,
+but the already-running usbmuxd had logged `LIBUSB_ERROR_NO_DEVICE` during device
+initialization and returned no USB devices. Restarting the existing Debian
+usbmuxd service restored its device connection; no xdb code, USB configuration
+or pairing records were changed to recover enumeration.
+
+- As the ordinary desktop user, `devices --usb -l` listed the expected UDID and
+  `pair --usb` successfully verified the existing USB trust record. This was
+  record reuse, not a new trust-prompt acceptance test.
+- `screenshot --usb` returned a valid 1125×2436 PNG.
+- A C ABI client explicitly opened `transport: "usb"`, read the device model
+  and OS version, and started video with software decoding. Three BGRA responses
+  had advancing serials (1, 33, 44), dimensions 1136×2464, and exactly
+  `4544 × 2464 = 11196416` payload bytes each. `video.stop` and
+  `connection.close` succeeded afterward.
+- usbmuxd reported no new transfer errors during these checks.
+
+This validates USB discovery, existing-record verification, device information,
+screenshot and decoded video on this VM setup. It does not establish long-term
+USB stability or identify the cause of the initial passthrough initialization
+failure. DDI mounting and input injection were not exercised in this run.
