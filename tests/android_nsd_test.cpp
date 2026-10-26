@@ -24,7 +24,7 @@ int main() {
     if (first.advertisements.size() == 1) {
         const auto &ad = first.advertisements[0];
         check(ad.identifier == "peer" && ad.auth_tag == std::string("a\0b", 3), "binary TXT preserved");
-        check(ad.instance.starts_with("phone\\046with\\046dot."), "decoded instance label escaped");
+        check(ad.instance == "phone.with.dot._remotepairing._tcp.local.", "decoded instance label escaped");
         check(ad.endpoints.size() == 2, "unsafe addresses filtered");
         check(ad.endpoints.back().address == "fe80::1234%" + std::to_string(index), "IPv6 local scope");
     }
