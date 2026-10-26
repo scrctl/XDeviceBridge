@@ -305,3 +305,29 @@ and record-persistence path with the native backend enabled. Backend selection
 was not traced during the run. The earlier host-unreachable observation above
 therefore no longer describes this later pairing attempt; media and input
 sessions remain covered by the separate results above.
+
+## Linux Avahi discovery and advertisement (2026-10-26)
+
+Debian 13.7 ARM64 in a Parallels VM, with a bridged LAN interface and Avahi 0.8,
+built source at `6d8ad99` plus the owner-name normalization fix `7ad229f`.
+The CLI and server ran as an ordinary desktop user with a separate test data
+directory; the existing desktop pairing store and system network configuration
+were left unchanged.
+
+- `xdb_avahi`, `xdb_dns_sd` and `xdb_discovery` passed inside the VM.
+- The first real discovery run exposed Avahi's owner names without a trailing
+  root dot. After normalizing them at the native adapter boundary, `devices
+  --wifi -l` listed the phone at IPv4 `10.24.24.7:49152` and its scoped IPv6
+  link-local endpoint on `enp0s5`. With an empty test pairing store it correctly
+  reported `discovered`, without inventing a UDID or claiming connectivity.
+- Runtime tracing confirmed loading `libavahi-client.so.3`, connection to the
+  system bus, and native `RecordBrowserNew` requests. The server's ELF `NEEDED`
+  list contains neither Avahi nor D-Bus libraries.
+- Pairing used native `EntryGroupNew`, five `AddRecord` calls and `Commit`.
+  `avahi-browse` resolved the UUID instance and matching UUID hostname with the
+  real listening port and the expected pairing TXT fields. Capture on the guest
+  interface observed IPv4/IPv6 multicast announcements and service queries from
+  the iPhone. During the advertisement, xdb owned no UDP discovery socket.
+
+Phone-initiated PIN entry, post-pairing verification and persistence remain to
+be accepted for this Linux run. USB is outside this acceptance record.
