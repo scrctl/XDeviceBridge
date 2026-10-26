@@ -291,3 +291,17 @@ stay capturable on this device.
 The host Mac itself could not complete Wi-Fi sessions on this LAN
 (unicast to the device returned host-unreachable while ICMP passed); Wi-Fi
 transport evidence above was collected from the Windows VM instead.
+
+## macOS Wi-Fi pairing from the native DNS-SD checkout (2026-10-26)
+
+The operator built `xdb` on macOS from `codex/avahi-mdns`, based on the Bonjour
+implementation and link fix at `c476333`, and ran `./xdb pair` without an address
+or USB option. The phone discovered the `xdb - <hostname>` pairing host, accepted
+the one-use PIN, and xdb reconnected to verify the new Wi-Fi pairing record before
+reporting `Paired` with the expected device UDID.
+
+This is operator-provided real-device evidence for the macOS pairing, reconnect
+and record-persistence path with the native backend enabled. Backend selection
+was not traced during the run. The earlier host-unreachable observation above
+therefore no longer describes this later pairing attempt; media and input
+sessions remain covered by the separate results above.
