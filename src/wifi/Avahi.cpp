@@ -123,6 +123,10 @@ struct Browser {
                 return;
             }
             ResourceRecord record{name, type, {}, event == AVAHI_BROWSER_NEW ? 120U : 0U};
+            // Avahi normalizes owner names without the DNS root dot; the wire
+            // encoder uses absolute names, like Bonjour callbacks already do.
+            if (record.name.empty()) return;
+            if (record.name.back() != '.') record.name.push_back('.');
             if (length) {
                 const auto *bytes = static_cast<const uint8_t *>(data);
                 record.data.assign(bytes, bytes + length);

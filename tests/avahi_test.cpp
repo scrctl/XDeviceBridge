@@ -84,7 +84,8 @@ AvahiRecordBrowser *avahi_record_browser_new(AvahiClient *, AvahiIfIndex interfa
     }
     if (type == 1) data = {198, 51, 100, 7};
     if (type == 28) { data.resize(16, 0); data[0] = 0xfe; data[1] = 0x80; data[15] = 7; }
-    const std::string owner = name;
+    std::string owner = name;
+    if (!owner.empty() && owner.back() == '.') owner.pop_back();
     for (const auto source : {AVAHI_PROTO_INET, AVAHI_PROTO_INET6}) {
         fake.events.push_back([=] {
             callback(nullptr, index, source, AVAHI_BROWSER_NEW, owner.c_str(), 1, type, data.data(), data.size(),
@@ -94,10 +95,10 @@ AvahiRecordBrowser *avahi_record_browser_new(AvahiClient *, AvahiIfIndex interfa
     if (type == 28 && (fake.withdraw_one || fake.withdraw_both)) {
         fake.events.push_back([=] {
             const auto removed = detail::dns_name_data(service);
-            callback(nullptr, index, AVAHI_PROTO_INET, AVAHI_BROWSER_REMOVE, "_remotepairing._tcp.local.",
+            callback(nullptr, index, AVAHI_PROTO_INET, AVAHI_BROWSER_REMOVE, "_remotepairing._tcp.local",
                      1, 12, removed.data(), removed.size(), AVAHI_LOOKUP_RESULT_MULTICAST, context);
             if (fake.withdraw_both)
-                callback(nullptr, index, AVAHI_PROTO_INET6, AVAHI_BROWSER_REMOVE, "_remotepairing._tcp.local.",
+                callback(nullptr, index, AVAHI_PROTO_INET6, AVAHI_BROWSER_REMOVE, "_remotepairing._tcp.local",
                          1, 12, removed.data(), removed.size(), AVAHI_LOOKUP_RESULT_MULTICAST, context);
         });
     }
