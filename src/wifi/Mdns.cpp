@@ -1,4 +1,8 @@
 #include "wifi/Mdns.h"
+#include "wifi/DnsSd.h"
+#ifdef __APPLE__
+#include "wifi/Bonjour.h"
+#endif
 
 #include "transport/SocketPlatform.h"
 #include <mdns.h>
@@ -568,10 +572,19 @@ BrowseResult browse(const BrowseOptions &options) {
         result.warnings.push_back("mDNS timeout must be between 0 and 60000 ms");
         return result;
     }
+    auto scan_timeout = options.timeout;
+#ifdef __APPLE__
+    const auto native_start = detail::RecordCache::Clock::now();
+    auto native = detail::bonjour_browse(options);
+    if (native.available || native.cancelled) return native;
+    scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - native_start);
+    if (scan_timeout.count() <= 0) return native;
+    result.warnings = std::move(native.warnings);
+#endif
     try {
         std::string error;
         if (!transport::initialize_sockets(error)) { result.warnings.push_back(std::move(error)); return result; }
-        const auto deadline = detail::RecordCache::Clock::now() + options.timeout;
+        const auto deadline = detail::RecordCache::Clock::now() + scan_timeout;
         std::vector<std::unique_ptr<QuerySocket>> sockets;
         for (const auto &iface : interfaces(result.warnings)) {
             if (stop_requested()) break;
@@ -870,7 +883,33 @@ std::vector<detail::HostReply> detail::host_query_reply(const HostRecords &recor
     return replies;
 }
 
+std::vector<std::pair<uint32_t, detail::HostRecords>> detail::local_host_records(
+    const HostAdvertisement &host, std::string &error) {
+    error.clear();
+    if (!valid_host(host, error)) return {};
+    std::vector<std::string> warnings;
+    std::map<uint32_t, HostRecords> grouped;
+    for (const auto &iface : interfaces(warnings)) {
+        if ((iface.local.ss_family == AF_INET && !host.advertise_ipv4) ||
+            (iface.local.ss_family == AF_INET6 && !host.advertise_ipv6)) continue;
+        std::array<char, INET6_ADDRSTRLEN> address{};
+        const void *raw = iface.local.ss_family == AF_INET ?
+            static_cast<const void *>(&reinterpret_cast<const sockaddr_in *>(&iface.local)->sin_addr) :
+            static_cast<const void *>(&reinterpret_cast<const sockaddr_in6 *>(&iface.local)->sin6_addr);
+        if (!inet_ntop(iface.local.ss_family, raw, address.data(), address.size())) continue;
+        const auto it = grouped.try_emplace(iface.cache_index,
+            HostRecords{host, host.instance_identifier + "." + std::string(kHostService),
+                        host.instance_identifier + ".local.", {}}).first;
+        it->second.addresses.emplace_back(address.data());
+    }
+    if (grouped.empty()) error = warnings.empty() ? "No multicast interface is available for mDNS" : warnings.front();
+    return {grouped.begin(), grouped.end()};
+}
+
 struct Advertiser::Impl {
+#ifdef __APPLE__
+    std::unique_ptr<detail::BonjourAdvertiser> native;
+#endif
     struct Binding { std::unique_ptr<QuerySocket> socket; detail::HostRecords records; };
     std::vector<Binding> bindings;
     detail::RecordCache::Clock::time_point next_announcement;
@@ -889,13 +928,29 @@ struct Advertiser::Impl {
 
 Advertiser::Advertiser(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Advertiser::~Advertiser() {
-    try { if (impl_) { std::string ignored; impl_->announce(0, ignored); } } catch (...) {}
+    try {
+        if (impl_) {
+#ifdef __APPLE__
+            if (impl_->native) return; // Closing the Bonjour connection withdraws its records.
+#endif
+            std::string ignored;
+            impl_->announce(0, ignored);
+        }
+    } catch (...) {}
 }
 
 std::unique_ptr<Advertiser> Advertiser::start(const HostAdvertisement &host, std::string &error) {
     error.clear();
     if (!valid_host(host, error)) return {};
     try {
+#ifdef __APPLE__
+        if (auto native = detail::BonjourAdvertiser::start(host, error)) {
+            auto impl = std::make_unique<Impl>();
+            impl->native = std::move(native);
+            return std::unique_ptr<Advertiser>(new Advertiser(std::move(impl)));
+        }
+        error.clear();
+#endif
         if (!transport::initialize_sockets(error)) return {};
         auto impl = std::make_unique<Impl>();
         std::vector<std::string> warnings;
@@ -937,6 +992,9 @@ bool Advertiser::poll(int timeout_ms, std::string &error) {
     if (timeout_ms < 0 || timeout_ms > 60000) {
         error = "mDNS timeout must be between 0 and 60000 ms"; return false;
     }
+#ifdef __APPLE__
+    if (impl_->native) return impl_->native->poll(timeout_ms, error);
+#endif
     const auto deadline = detail::RecordCache::Clock::now() + std::chrono::milliseconds(timeout_ms);
     const auto now = detail::RecordCache::Clock::now();
     if (now >= impl_->next_announcement) {

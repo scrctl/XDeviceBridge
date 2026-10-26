@@ -230,6 +230,7 @@ add_library(xdb_core STATIC
         src/wifi/Rppairing.cpp
         src/wifi/PairRecord.cpp
         src/wifi/Mdns.cpp
+        src/wifi/DnsSd.cpp
         src/wifi/DiscoveryIdentity.cpp
         src/wifi/PairingIdentity.cpp
         src/wifi/PairVerify.cpp
@@ -243,6 +244,10 @@ target_link_libraries(xdb_core PUBLIC XdbAppleFrameworks OpenSSL::SSL OpenSSL::C
 target_link_libraries(xdb_core PRIVATE pugixml::pugixml xdb_lwip Xdb::Mdns)
 target_link_libraries(xdb_core PRIVATE XdbCurl)
 target_link_libraries(xdb_core PUBLIC Xdb::Threading)
+if(APPLE)
+    # DNS-SD symbols are re-exported by the implicitly linked libSystem.
+    target_sources(xdb_core PRIVATE src/wifi/Bonjour.cpp)
+endif()
 if(WIN32)
     target_sources(xdb_core PRIVATE src/wifi/PairRecordWindows.cpp)
     target_link_libraries(xdb_core PUBLIC ws2_32 PRIVATE advapi32 iphlpapi)
@@ -353,7 +358,7 @@ if(XDB_BUILD_TESTS AND XDB_BUILD_SERVER AND XDB_BUILD_CLI)
             set_tests_properties(xdb_install PROPERTIES TIMEOUT 30)
         endif()
     endif()
-    foreach(name ddi_selection json plist hid host_metadata discovery_status text_cancellation api_parameters output_file)
+    foreach(name ddi_selection json plist hid host_metadata discovery_status text_cancellation api_parameters output_file dns_sd)
         add_executable(xdb_${name}_test tests/${name}_test.cpp)
         target_link_libraries(xdb_${name}_test PRIVATE xdb_core)
         add_test(NAME xdb_${name} COMMAND xdb_${name}_test)
@@ -374,6 +379,20 @@ endif()
 
 if(XDB_BUILD_TESTS AND XDB_BUILD_SERVER AND UNIX)
     target_sources(xdb_wifi_test PRIVATE tests/pair_setup_reply_test.cpp)
+    if(APPLE)
+        add_executable(xdb_bonjour_test tests/bonjour_test.cpp src/wifi/Bonjour.cpp)
+        target_compile_definitions(xdb_bonjour_test PRIVATE
+            DNSServiceCreateConnection=xdb_test_create_connection
+            DNSServiceRefDeallocate=xdb_test_deallocate
+            DNSServiceRefSockFD=xdb_test_socket
+            DNSServiceProcessResult=xdb_test_process
+            DNSServiceQueryRecord=xdb_test_query
+            DNSServiceRegisterRecord=xdb_test_register
+            local_host_records=xdb_test_local_host_records)
+        target_link_libraries(xdb_bonjour_test PRIVATE xdb_core)
+        add_test(NAME xdb_bonjour COMMAND xdb_bonjour_test)
+        set_tests_properties(xdb_bonjour PROPERTIES TIMEOUT 10)
+    endif()
     if(XDB_LIBAV_FOUND)
         add_executable(xdb_ffmpeg_decoder_test tests/ffmpeg_decoder_test.cpp src/decode/FFmpegDecoder.cpp)
         target_compile_definitions(xdb_ffmpeg_decoder_test PRIVATE

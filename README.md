@@ -52,6 +52,11 @@ versions when not supplied locally. FFmpeg video decoding is optional; Apple als
 has VideoToolbox. FFmpeg audio decoding additionally needs libswresample.
 There is no SDL, MaaUtils or OpenCV dependency.
 
+On macOS, device discovery and temporary Wi-Fi pairing advertisements use the
+system Bonjour service. If it cannot be opened, xdb falls back to direct mDNS.
+The discovery timeout still bounds a fresh snapshot; this does not add a
+persistent server-side device cache or verify device connectivity.
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4

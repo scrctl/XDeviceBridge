@@ -60,6 +60,10 @@ OpenSSL 和 curl。未提供本地依赖时，nlohmann-json、pugixml、lwIP 和
 使用固定版本的源码。FFmpeg 视频解码为可选项，Apple 平台还支持 VideoToolbox；
 FFmpeg 音频解码另外需要 libswresample。项目不依赖 SDL、MaaUtils 或 OpenCV。
 
+macOS 的设备发现和临时 Wi-Fi 配对广播优先使用系统 Bonjour，无法打开时回退到
+直接 mDNS。发现超时仍用于收集一次新快照；这一步尚未增加 Server 持久设备缓存，
+也不代表已经验证设备可连接。
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4
