@@ -45,11 +45,12 @@ struct BrowseOptions {
 struct BrowseResult {
     std::vector<Advertisement> advertisements;
     bool cancelled = false;
-    bool available = false;  ///< 至少一个接口成功发送查询；空列表不代表扫描失败
+    bool available = false;  ///< 原生后端已接受查询或至少一个接口成功发包；空列表不代表扫描失败
     std::vector<std::string> warnings;
 };
 
-/// 使用各个已启用的组播网卡做有期限的查询，不配对、不连接设备服务。
+/// macOS 优先通过系统 Bonjour 查询，不可用时使用各个组播网卡直接查询。
+/// 查询有期限，不配对、不连接设备服务。
 /// 零超时直接返回空快照，不枚举接口或发包。取消保留已收到的快照并置 cancelled，
 /// 收包等待最多 50 ms；接口或网络错误放入 warnings，不写终端。
 /// 超时范围是 0..60 秒；超过范围返回 warning，不进行网络操作。
@@ -76,7 +77,7 @@ class Advertiser {
   public:
     static std::unique_ptr<Advertiser> start(const HostAdvertisement &host, std::string &error);
     /// 最多等待 timeout_ms（0..60000）；无查询也是成功。调用方用短片段检查取消。
-    /// 回应本机 PTR/SRV/TXT/A/AAAA 查询并周期刷新 TTL=120 秒的公告。
+    /// 处理原生后端事件，或回应本机查询并刷新 TTL=120 秒的直接公告。
     bool poll(int timeout_ms, std::string &error);
     /// 最后尽力发送 TTL=0 goodbye，再关闭本对象拥有的全部 socket。
     ~Advertiser();
