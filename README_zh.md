@@ -64,6 +64,11 @@ macOS 的设备发现和临时 Wi-Fi 配对广播优先使用系统 Bonjour，�
 直接 mDNS。发现超时仍用于收集一次新快照；这一步尚未增加 Server 持久设备缓存，
 也不代表已经验证设备可连接。
 
+Linux 构建时若有 Avahi 开发头文件（Debian/Ubuntu 的 `libavahi-client-dev`），
+也会优先通过系统 Avahi 服务发现设备和广播配对主机。服务端按需加载 Avahi 客户端库；
+库、后台服务或系统总线不可用时回退到直接 mDNS。仅构建客户端无需 Avahi，
+xdb 不修改系统 mDNS 配置，也不要求 root 权限。
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4

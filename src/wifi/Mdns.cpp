@@ -2,6 +2,8 @@
 #include "wifi/DnsSd.h"
 #ifdef __APPLE__
 #include "wifi/Bonjour.h"
+#elif defined(XDB_HAVE_AVAHI)
+#include "wifi/Avahi.h"
 #endif
 
 #include "transport/SocketPlatform.h"
@@ -26,6 +28,11 @@
 
 namespace xdb::wifi::mdns {
 namespace {
+#ifdef __APPLE__
+using NativeAdvertiser = detail::BonjourAdvertiser;
+#elif defined(XDB_HAVE_AVAHI)
+using NativeAdvertiser = detail::AvahiAdvertiser;
+#endif
 
 constexpr std::string_view kService = "_remotepairing._tcp.local.";
 constexpr size_t kMaxPacket = 16384;
@@ -573,9 +580,13 @@ BrowseResult browse(const BrowseOptions &options) {
         return result;
     }
     auto scan_timeout = options.timeout;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
     const auto native_start = detail::RecordCache::Clock::now();
+#ifdef __APPLE__
     auto native = detail::bonjour_browse(options);
+#else
+    auto native = detail::avahi_browse(options);
+#endif
     if (native.available || native.cancelled) return native;
     scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - native_start);
     if (scan_timeout.count() <= 0) return native;
@@ -907,8 +918,8 @@ std::vector<std::pair<uint32_t, detail::HostRecords>> detail::local_host_records
 }
 
 struct Advertiser::Impl {
-#ifdef __APPLE__
-    std::unique_ptr<detail::BonjourAdvertiser> native;
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
+    std::unique_ptr<NativeAdvertiser> native;
 #endif
     struct Binding { std::unique_ptr<QuerySocket> socket; detail::HostRecords records; };
     std::vector<Binding> bindings;
@@ -930,8 +941,8 @@ Advertiser::Advertiser(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Advertiser::~Advertiser() {
     try {
         if (impl_) {
-#ifdef __APPLE__
-            if (impl_->native) return; // Closing the Bonjour connection withdraws its records.
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
+            if (impl_->native) return; // Closing the native connection withdraws its records.
 #endif
             std::string ignored;
             impl_->announce(0, ignored);
@@ -943,8 +954,8 @@ std::unique_ptr<Advertiser> Advertiser::start(const HostAdvertisement &host, std
     error.clear();
     if (!valid_host(host, error)) return {};
     try {
-#ifdef __APPLE__
-        if (auto native = detail::BonjourAdvertiser::start(host, error)) {
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
+        if (auto native = NativeAdvertiser::start(host, error)) {
             auto impl = std::make_unique<Impl>();
             impl->native = std::move(native);
             return std::unique_ptr<Advertiser>(new Advertiser(std::move(impl)));
@@ -992,7 +1003,7 @@ bool Advertiser::poll(int timeout_ms, std::string &error) {
     if (timeout_ms < 0 || timeout_ms > 60000) {
         error = "mDNS timeout must be between 0 and 60000 ms"; return false;
     }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
     if (impl_->native) return impl_->native->poll(timeout_ms, error);
 #endif
     const auto deadline = detail::RecordCache::Clock::now() + std::chrono::milliseconds(timeout_ms);

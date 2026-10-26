@@ -27,7 +27,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libssl-dev libcurl4-openssl-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavformat-dev
+          sudo apt-get install -y ninja-build libssl-dev libcurl4-openssl-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavformat-dev libavahi-client-dev
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |

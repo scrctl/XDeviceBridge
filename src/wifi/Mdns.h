@@ -49,7 +49,8 @@ struct BrowseResult {
     std::vector<std::string> warnings;
 };
 
-/// macOS 优先通过系统 Bonjour 查询，不可用时使用各个组播网卡直接查询。
+/// macOS 优先通过系统 Bonjour，Linux 编入 Avahi 后优先通过其系统服务查询。
+/// 原生后端不可用时使用各个组播网卡直接查询。
 /// 查询有期限，不配对、不连接设备服务。
 /// 零超时直接返回空快照，不枚举接口或发包。取消保留已收到的快照并置 cancelled，
 /// 收包等待最多 50 ms；接口或网络错误放入 warnings，不写终端。

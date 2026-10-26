@@ -57,6 +57,12 @@ system Bonjour service. If it cannot be opened, xdb falls back to direct mDNS.
 The discovery timeout still bounds a fresh snapshot; this does not add a
 persistent server-side device cache or verify device connectivity.
 
+Linux builds with Avahi development headers (`libavahi-client-dev` on Debian/
+Ubuntu) also use the system Avahi service for discovery and pairing advertisements.
+The server loads the Avahi client library only when needed; a missing library,
+daemon or system-bus connection falls back to direct mDNS. Client-only builds do
+not need Avahi. xdb does not change system mDNS configuration or require root.
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j 4
