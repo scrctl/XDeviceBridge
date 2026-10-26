@@ -37,15 +37,22 @@ constexpr CommandHelp commands[] = {
      "select this computer and enter the one-use code printed by xdb.\n"
      "USB pairing requires device trust. The server saves pairing credentials.\n\n"
      "Examples:\n  xdb pair --wifi\n  xdb -s UDID pair --usb\n"},
-    {"ddi", "xdb [-s UDID] ddi prepare [--wifi [ADDRESS]] [--cache-dir DIR] [--replace]",
-     "Download and mount a developer disk image for a paired device.\n\n"
+    {"ddi", "xdb [-s UDID] ddi <prepare|status|remove> [--usb|--wifi [ADDRESS]] [--json]",
+     "Manage the developer disk image on a paired device.\n\n"
+     "  prepare           Download and mount; reuse an applicable mounted image\n"
+     "  status            Query DDI installation and mount state\n"
+     "  remove            Remove the device DDI; already absent is success\n\n"
+     "  --usb             Use USB (the default for DDI operations)\n"
      "  --wifi [ADDRESS]  Use paired Wi-Fi discovery, or an explicit device address\n"
-     "  --cache-dir DIR   Absolute cache directory on the server host\n"
-     "  --replace         Allow replacement of an already mounted image\n\n"
-     "An applicable mounted image is reused unless replacement is requested.\n"
+     "  --cache-dir DIR   prepare: absolute cache directory on the server host\n"
+     "  --replace         prepare: allow replacement of an already mounted image\n\n"
      "Without --cache-dir, downloads use temporary storage.\n"
+     "remove unmounts Classic/Personalized images or uninstalls the DDI Cryptex.\n"
+     "It verifies removal and preserves pairing records and host caches.\n"
+     "Close active device sessions before managing DDI.\n"
      "A sole identified device is selected when -s is omitted.\n\n"
-     "Examples:\n  xdb ddi prepare\n  xdb -s UDID ddi prepare --wifi --cache-dir /absolute/ddi-cache\n"},
+     "Examples:\n  xdb ddi status\n  xdb ddi remove --wifi\n"
+     "  xdb -s UDID ddi prepare --wifi --cache-dir /absolute/ddi-cache\n"},
     {"screenshot", "xdb [-s UDID] screenshot FILE [--usb|--wifi [ADDRESS]]",
      "Save a lossless PNG screenshot to FILE on the client host.\n\n"
      "  --usb             Connect through USB only\n"
@@ -97,6 +104,8 @@ void print_help(std::span<const std::string> command) {
                      "  devices [-l]        List discovered devices\n"
                      "  pair                Pair with an iOS device\n"
                      "  ddi prepare         Download and mount a developer disk image\n"
+                     "  ddi status          Query developer image installation/mount state\n"
+                     "  ddi remove          Remove the developer image from the device\n"
                      "  screenshot FILE     Save a screenshot\n"
                      "  start-server        Start the background server\n"
                      "  kill-server         Stop the server\n"
@@ -114,7 +123,8 @@ void print_help(std::span<const std::string> command) {
                      "Run 'xdb <command> --help' for command options and examples.\n";
         return;
     }
-    if (command[0] == "ddi" && command.size() > 1 && command[1] != "prepare")
+    if (command[0] == "ddi" && command.size() > 1 && command[1] != "prepare" &&
+        command[1] != "status" && command[1] != "remove")
         throw std::invalid_argument("Unknown ddi command; run xdb ddi --help");
     for (const auto &entry : commands) {
         if (command[0] != entry.name) continue;

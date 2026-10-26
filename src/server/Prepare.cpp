@@ -23,6 +23,81 @@ std::string safe_text(const std::string &text) {
     }
     return out;
 }
+struct DdiTarget {
+    ddi::DownloadTarget target;
+    std::optional<uint64_t> ecid;
+    std::optional<transport::DeviceRecord> record;
+    std::optional<transport::Lockdown> lockdown;
+    std::optional<remote::Device> device;
+
+    bool connect(const PrepareOptions &o, std::string &error, const Cancel &cancelled) {
+        using namespace std::chrono;
+        if (o.wifi.empty()) {
+            transport::IoBudget preparation({seconds(30), cancelled});
+            std::vector<transport::DeviceRecord> records;
+            if (transport::Usbmux::list_devices_for_discovery(records, milliseconds(1000), cancelled, error) !=
+                transport::UsbmuxDiscoveryStatus::complete)
+                return false;
+            record = remote::detail::select_usbmux_device(records, o.serial, error, true);
+            if (!record)
+                return false;
+            lockdown =
+                transport::Lockdown::establish_bounded(record->device_id, record->udid, preparation, error);
+            if (!lockdown)
+                return false;
+            auto query = plist::Value::Dict();
+            query.set("Request", plist::Value::Str("GetValue"));
+            plist::Value reply;
+            if (!lockdown->request_bounded(
+                    query, reply, preparation.remaining(), [&preparation] { return preparation.stopped(); },
+                    error))
+                return false;
+            if (!preparation.check(error))
+                return false;
+            const auto *values = reply.find("Value");
+            if (!values || !values->is_dict() || reply.find("Error")) {
+                error = "DDI target metadata is missing its OS version or product model";
+                return false;
+            }
+            auto text = [&](const char *key) {
+                const auto *v = values->find(key);
+                return v ? v->as_string_or() : std::string{};
+            };
+            auto number = [&](const char *key) -> std::optional<uint64_t> {
+                const auto *v = values->find(key);
+                if (v && (v->is_uint() || (v->is_int() && v->integer >= 0)))
+                    return v->as_uint_or();
+                return std::nullopt;
+            };
+            target.system_version = text("ProductVersion");
+            target.product_type = text("ProductType");
+            target.hardware_model = text("HardwareModel");
+            target.board_id = number("BoardId");
+            target.chip_id = number("ChipID");
+            ecid = number("UniqueChipID");
+        } else {
+            device = open_device(o.serial, o.wifi, error, o.wifi_port, cancelled, o.data_directory);
+            if (!device)
+                return false;
+            target.system_version = device->property("OSVersion");
+            target.product_type = device->property("ProductType");
+            target.hardware_model = device->property("HardwareModel");
+            const auto *properties = device->rsd().properties();
+            auto number = [&](const char *key) -> std::optional<uint64_t> {
+                const auto *v = properties ? properties->find(key) : nullptr;
+                if (v && v->type == xpc::Type::UInt64)
+                    return v->uint64;
+                if (v && v->type == xpc::Type::Int64 && v->int64 >= 0)
+                    return static_cast<uint64_t>(v->int64);
+                return std::nullopt;
+            };
+            target.board_id = number("BoardId");
+            target.chip_id = number("ChipID");
+            ecid = number("UniqueChipID");
+        }
+        return true;
+    }
+};
 } // namespace
 bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event, const Cancel &cancelled) {
     using namespace std::chrono;
@@ -41,74 +116,10 @@ bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event
                     "replacing again.\n");
         return false;
     };
-    ddi::DownloadTarget target;
-    std::optional<uint64_t> ecid;
-    std::optional<transport::DeviceRecord> record;
-    std::optional<transport::Lockdown> lockdown;
-    std::optional<remote::Device> device;
-    if (o.wifi.empty()) {
-        transport::IoBudget preparation({seconds(30), cancelled});
-        std::vector<transport::DeviceRecord> records;
-        if (transport::Usbmux::list_devices_for_discovery(records, milliseconds(1000), cancelled, error) !=
-            transport::UsbmuxDiscoveryStatus::complete)
-            return fail();
-        record = remote::detail::select_usbmux_device(records, o.serial, error, true);
-        if (!record)
-            return fail();
-        lockdown =
-            transport::Lockdown::establish_bounded(record->device_id, record->udid, preparation, error);
-        if (!lockdown)
-            return fail();
-        auto query = plist::Value::Dict();
-        query.set("Request", plist::Value::Str("GetValue"));
-        plist::Value reply;
-        if (!lockdown->request_bounded(
-                query, reply, preparation.remaining(), [&preparation] { return preparation.stopped(); },
-                error))
-            return fail();
-        if (!preparation.check(error))
-            return fail();
-        const auto *values = reply.find("Value");
-        if (!values || !values->is_dict() || reply.find("Error")) {
-            error = "DDI target metadata is missing its OS version or product model";
-            return fail();
-        }
-        auto text = [&](const char *key) {
-            const auto *v = values->find(key);
-            return v ? v->as_string_or() : std::string{};
-        };
-        auto number = [&](const char *key) -> std::optional<uint64_t> {
-            const auto *v = values->find(key);
-            if (v && (v->is_uint() || (v->is_int() && v->integer >= 0)))
-                return v->as_uint_or();
-            return std::nullopt;
-        };
-        target.system_version = text("ProductVersion");
-        target.product_type = text("ProductType");
-        target.hardware_model = text("HardwareModel");
-        target.board_id = number("BoardId");
-        target.chip_id = number("ChipID");
-        ecid = number("UniqueChipID");
-    } else {
-        device = open_device(o.serial, o.wifi, error, o.wifi_port, cancelled, o.data_directory);
-        if (!device)
-            return fail();
-        target.system_version = device->property("OSVersion");
-        target.product_type = device->property("ProductType");
-        target.hardware_model = device->property("HardwareModel");
-        const auto *properties = device->rsd().properties();
-        auto number = [&](const char *key) -> std::optional<uint64_t> {
-            const auto *v = properties ? properties->find(key) : nullptr;
-            if (v && v->type == xpc::Type::UInt64)
-                return v->uint64;
-            if (v && v->type == xpc::Type::Int64 && v->int64 >= 0)
-                return static_cast<uint64_t>(v->int64);
-            return std::nullopt;
-        };
-        target.board_id = number("BoardId");
-        target.chip_id = number("ChipID");
-        ecid = number("UniqueChipID");
-    }
+    DdiTarget connected;
+    if (!connected.connect(o, error, cancelled))
+        return fail();
+    auto &[target, ecid, record, lockdown, device] = connected;
     if (cancelled && cancelled()) {
         error = "DDI installation cancelled";
         return fail();
@@ -291,5 +302,91 @@ bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event
              safe_text(result->image_type).c_str());
     }
     return true;
+}
+std::optional<Json> manage_ddi(const PrepareOptions &o, bool remove, std::string &error,
+                              const Cancel &cancelled) {
+    using namespace std::chrono;
+    DdiTarget connected;
+    if (!connected.connect(o, error, cancelled))
+        return std::nullopt;
+    const auto selected = ddi::select_for_version(connected.target.system_version, error);
+    if (!selected)
+        return std::nullopt;
+    // Modern systems can expose a Cryptex DDI independently of the download
+    // policy. Inspect the actual installation before choosing its removal path.
+    if (selected->kind != ddi::Kind::Classic && !connected.device) {
+        transport::IoBudget preparation({seconds(30), cancelled});
+        connected.device = remote::Device::establish_bounded(connected.record->udid, preparation,
+                                                             error, false, true);
+        if (!connected.device)
+            return std::nullopt;
+    }
+    transport::IoBudget budget({seconds(30), cancelled});
+    auto stopped = [&] { return budget.stopped(); };
+    ddi::CryptexInstallOptions cryptex_options;
+    cryptex_options.timeout = seconds(30);
+    cryptex_options.cancelled = stopped;
+    const bool cryptex_available = connected.device &&
+        connected.device->rsd().has_service("com.apple.security.cryptexd.remote");
+    if (selected->kind == ddi::Kind::Cryptex && !cryptex_available) {
+        error = "Cannot verify DDI installation: device does not advertise cryptexd";
+        return std::nullopt;
+    }
+    std::optional<ddi::CryptexInstallResult> installed;
+    auto query_cryptex = [&] {
+        return !cryptex_available || ddi::query_installed_cryptex(*connected.device, installed,
+                                                                cryptex_options, error);
+    };
+    if (!query_cryptex())
+        return std::nullopt;
+    auto open_mounter = [&] {
+        return o.wifi.empty()
+                   ? ddi::ServiceTransport::open_usb(*connected.lockdown, connected.record->device_id,
+                                                     budget.remaining(), stopped, error)
+                   : ddi::ServiceTransport::open_remote(*connected.device, budget.remaining(), stopped, error);
+    };
+    ddi::MountOptions options;
+    options.timeout = seconds(30);
+    options.cancelled = stopped;
+    bool changed = false;
+    if (remove && installed) {
+        if (!ddi::remove_ddi_cryptex(*connected.device, cryptex_options, changed, error))
+            return std::nullopt;
+        installed.reset();
+    }
+    auto adapter = open_mounter();
+    if (!adapter)
+        return std::nullopt;
+    auto wire = adapter->service();
+    if (remove && !changed) {
+        // An image-mounter DDI can remain even on a Cryptex-capable OS.
+        if (!ddi::unmount_current(wire, selected->kind, options, error, &changed))
+            return std::nullopt;
+    }
+    auto mounted = ddi::inspect_mounted(wire, selected->kind, options, error);
+    if (!mounted)
+        return std::nullopt;
+    if (remove) {
+        if (!query_cryptex())
+            return std::nullopt;
+        if (installed || mounted->state != ddi::MountState::NotMounted) {
+            error = "DDI remains installed or mounted after removal";
+            return std::nullopt;
+        }
+    }
+    if (!budget.check(error, "DDI management"))
+        return std::nullopt;
+    Json result = {{"udid", o.serial},
+                   {"os_version", connected.target.system_version},
+                   {"kind", std::string(ddi::kind_name(selected->kind))},
+                   {"image_type", mounted->image_type},
+                   {"mounted", mounted->state != ddi::MountState::NotMounted},
+                   {"verification", mounted->verification},
+                   {"cryptex_installed", cryptex_available ? Json(bool(installed)) : Json(nullptr)},
+                   {"cryptex_identifier", installed ? installed->identifier : std::string()},
+                   {"cryptex_version", installed ? installed->version : std::string()}};
+    if (remove)
+        result["changed"] = changed;
+    return result;
 }
 } // namespace xdb::server

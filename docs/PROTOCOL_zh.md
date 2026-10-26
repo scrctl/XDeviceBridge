@@ -95,6 +95,8 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `pair` | `transport`：wifi/usb；可选 `udid`；`timeout_ms`：1..300000 | UDID 和复用状态；进度／PIN 事件 |
 | `ddi.download` | `os_version`，可选 `product_type`、`cache_directory`、`timeout_seconds` | 构建／缓存元数据；进度事件 |
 | `ddi.prepare` | `udid`，可选 `wifi`、`port`、`cache_directory`、`replace`、下载／安装超时秒数 | 准备状态；进度事件 |
+| `ddi.status` | `udid`，可选 `wifi`、`port` | 挂载状态和证据；独立查询的 DDI Cryptex 安装信息 |
+| `ddi.remove` | `udid`，可选 `wifi`、`port` | 验证后的已移除状态，以及本次是否执行了移除 |
 | `connection.open` | `udid`，可选 `wifi`：auto/地址，`port`：设备端口 | 获取连接持有的会话 |
 | `connection.close` | 无 | 释放服务、输入和设备租约 |
 | `device.info` | 无 | 设备 UDID、系统版本、型号 |
@@ -126,8 +128,18 @@ connected 表示活跃、已认证的服务端会话，不是刚执行的存活�
 已有候选项 `paired` 布尔值仍仅描述完整且匹配的本地记录。
 列举请求不会主动连接或配对。
 
-仅 CLI 的设备选择允许 `screenshot`／`ddi prepare` 省略 `-s`；
-显式 SDK UDID 和请求格式不变。
+仅 CLI 的设备选择允许 `screenshot`／`ddi prepare`／`ddi status`／`ddi remove`
+在只发现一台已识别设备时省略 `-s`。SDK 的 DDI 方法要求显式传入非空 UDID。
+
+`ddi.status` 独立查询挂载证据和 DDI Cryptex 的安装信息，不下载或安装。
+`cryptex_installed:null` 表示设备未广播该服务；查询安装状态失败时返回错误。
+`ddi.remove` 执行准备的反向操作：若存在 DDI Cryptex，按实际安装版本卸载；
+否则取消 Classic／Personalized 镜像挂载。移除后复查状态，已经不存在时直接成功。
+保留电脑缓存、配对记录和其他 Cryptex，不请求更新 nonce。
+两者都需要独占设备租约，应先关闭活跃的设备会话。
+`wifi` 为空时使用 USB，`wifi:"auto"` 使用已配对的 Wi-Fi 发现。
+返回的系统镜像类别不代表当前镜像的构建身份。
+报错或取消前设备状态可能已经改变，应先查询状态再决定是否重试移除。
 
 触摸坐标针对设备面板坐标轴，不是经过旋转或裁剪的客户端窗口。
 BGRA 帧可能包含编解码填充。`display` 元数据来自设备显示订阅，

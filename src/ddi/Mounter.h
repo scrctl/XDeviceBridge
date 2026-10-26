@@ -42,8 +42,9 @@ std::optional<MountResult> inspect_mounted(PlistService &, Kind, const MountOpti
 // Target-aware inspection checks Classic signatures against the pinned OS catalog
 // without downloading an image. Callers must require signature_matches == true.
 std::optional<MountResult> inspect_mounted(PlistService &, const DownloadTarget &, const MountOptions &, std::string &error);
-// Explicit replacement only; never rolls a nonce. Verifies the image is gone.
-bool unmount_current(PlistService &, Kind, const MountOptions &, std::string &error);
+// Explicit removal only; never rolls a nonce. Already absent is success.
+// Verifies the image is gone; changed is set only after a verified removal.
+bool unmount_current(PlistService &, Kind, const MountOptions &, std::string &error, bool *changed = nullptr);
 // Classic/Personalized only. Validates pinned cache, prepares signature/ticket,
 // sends image and checks mounted state. Classic reuse requires a matching signature.
 // AlreadyMounted is not an installation.

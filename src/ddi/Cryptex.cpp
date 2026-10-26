@@ -109,29 +109,60 @@ struct Session {
     bool installed(std::optional<CryptexInstallResult> &out, std::string &error) {
         xpc::Value argv;
         if (!invoke("copy-installed", xpc::make_dict(), argv, error)) return false;
-        out.reset();
-        if (argv.type == xpc::Type::Null) return true;
-        if (!argv.is_dict()) { error = "Cryptex installed state is malformed"; return false; }
-        const auto array = argv.find("remote-cryptex-array");
-        if (!array) return true;
-        if (!array->is_array()) { error = "Cryptex installed state is malformed"; return false; }
-        for (const auto &entry : array->array) {
-            if (!entry.is_dict()) { error = "Cryptex installed state is malformed"; return false; }
-            const auto &id = entry.at("remote-cryptex-identifier");
-            const auto &version = entry.at("remote-cryptex-version");
-            if (!id.is_string() || !version.is_string() || version.string.empty()) {
-                error = "Cryptex installed state is malformed"; return false;
-            }
-            if (id.string != ddi_identifier) continue;
-            if (out) { error = "Multiple DDI Cryptex installations require manual resolution"; return false; }
-            out = CryptexInstallResult{true, id.string, version.string};
-        }
-        return true;
+        return detail::parse_installed_cryptex(argv, out, error);
     }
 };
 } // namespace
 
 namespace detail {
+bool parse_installed_cryptex(const xpc::Value &argv, std::optional<CryptexInstallResult> &out,
+                             std::string &error) {
+    out.reset();
+    if (argv.type == xpc::Type::Null) return true;
+    if (!argv.is_dict()) { error = "Cryptex installed state is malformed"; return false; }
+    const auto array = argv.find("remote-cryptex-array");
+    if (!array) return true;
+    if (!array->is_array() || array->array.size() > 1024) {
+        error = "Cryptex installed state is malformed"; return false;
+    }
+    for (const auto &entry : array->array) {
+        if (!entry.is_dict()) { error = "Cryptex installed state is malformed"; return false; }
+        const auto &id = entry.at("remote-cryptex-identifier");
+        const auto &version = entry.at("remote-cryptex-version");
+        if (!id.is_string() || id.string.empty() || id.string.size() > 256 ||
+            !version.is_string() || version.string.empty() || version.string.size() > 256 ||
+            std::any_of(version.string.begin(), version.string.end(),
+                        [](unsigned char c) { return c < 32 || c == 127; })) {
+            error = "Cryptex installed state is malformed"; return false;
+        }
+        if (id.string != ddi_identifier) continue;
+        if (out) { error = "Multiple DDI Cryptex installations require manual resolution"; return false; }
+        out = CryptexInstallResult{true, id.string, version.string};
+    }
+    return true;
+}
+bool remove_ddi_cryptex(const CryptexInvoke &invoke, bool &changed, std::string &error) {
+    error.clear(); changed = false;
+    auto query = [&](std::optional<CryptexInstallResult> &out) {
+        xpc::Value argv;
+        return invoke("copy-installed", xpc::make_dict(), argv, error) &&
+               parse_installed_cryptex(argv, out, error);
+    };
+    std::optional<CryptexInstallResult> existing;
+    if (!query(existing)) return false;
+    if (!existing) return true;
+    auto argv = xpc::make_dict();
+    xpc::dict_set(argv, "remote-cryptex-identifier", xpc::make_string(std::string(ddi_identifier)));
+    xpc::dict_set(argv, "remote-cryptex-version", xpc::make_string(existing->version));
+    xpc::Value ignored;
+    if (!invoke("uninstall", argv, ignored, error)) return false;
+    if (!query(existing)) return false;
+    if (existing) {
+        error = "DDI Cryptex remains installed after uninstall request"; return false;
+    }
+    changed = true;
+    return true;
+}
 std::optional<CryptexMetadata> parse_cryptex_metadata(const plist::Value &manifest,
                                                     const plist::Value &info, std::string &error) {
     error.clear();
@@ -238,6 +269,24 @@ bool query_installed_cryptex(remote::Device &device, std::optional<CryptexInstal
             return false;
         }
         return true;
+    } catch (const std::exception &e) { error = e.what(); return false; }
+}
+
+bool remove_ddi_cryptex(remote::Device &device, const CryptexInstallOptions &options,
+                        bool &changed, std::string &error) {
+    error.clear(); changed = false;
+    try {
+        if (options.timeout.count() <= 0 || options.timeout > std::chrono::hours(1)) {
+            error = "Cryptex removal timeout is invalid"; return false;
+        }
+        if (!device.rsd().supports(service_name, "CryptexInstall")) {
+            error = "Device does not advertise CryptexInstall"; return false;
+        }
+        Session session(device, options);
+        return detail::remove_ddi_cryptex([&](std::string_view routine, const xpc::Value &argv,
+                                            xpc::Value &out, std::string &failure) {
+            return session.invoke(routine, argv, out, failure) && session.left(failure);
+        }, changed, error);
     } catch (const std::exception &e) { error = e.what(); return false; }
 }
 

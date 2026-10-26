@@ -25,8 +25,25 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                                        interface='', connection_type='USB',
                                        paired=False, pairing='unknown'))
     cancelled = False
+    ddi_mounted = True
+    cryptex_installed = True
+    ddi_error = False
 
     def handle(name, params):
+        if name in ('ddi.status', 'ddi.remove'):
+            with server.lock:
+                server.calls.append((name, params))
+            if ddi_error:
+                raise ValueError('ImageBusy')
+            result = dict(udid=params['udid'], os_version='27.0.1', kind='cryptex',
+                          image_type='Personalized', mounted=ddi_mounted if name == 'ddi.status' else False,
+                          verification='CopyDevices entry' if ddi_mounted and name == 'ddi.status' else '',
+                          cryptex_installed=cryptex_installed if name == 'ddi.status' else False,
+                          cryptex_identifier='com.apple.MobileAsset.DDI' if cryptex_installed and name == 'ddi.status' else '',
+                          cryptex_version='27.1.5228.8' if cryptex_installed and name == 'ddi.status' else '')
+            if name == 'ddi.remove':
+                result['changed'] = ddi_mounted or cryptex_installed
+            return result, b''
         if name == 'devices':
             with server.lock:
                 server.calls.append((name, params))
@@ -44,7 +61,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     summary = run('--help').stdout
     assert 'Commands:' in summary and 'Options:' in summary
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
-    for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'),
+    for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
                     ('screenshot',), ('start-server',), ('kill-server',), ('server',),
                     ('rpc',), ('rpc-shell',)):
         args = command if command == ('-h',) else (*command, '--help')
@@ -52,12 +69,18 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'connectivity' in run('devices', '--help').stdout
     assert 'one-use code' in run('pair', '--help').stdout
     assert '--cache-dir' in run('ddi', 'prepare', '--help').stdout
+    ddi_help = run('ddi').stdout
+    assert ddi_help == run('ddi', '--help').stdout
+    assert all(command in ddi_help for command in ('prepare', 'status', 'remove'))
+    for args in (('ddi', 'unknown'), ('ddi', 'status', 'extra')):
+        error = run(*args, ok=False).stderr
+        assert 'run xdb ddi --help' in error and 'screenshot' not in error
     assert 'not an iOS command shell' in run('rpc-shell', '--help').stdout
     assert 'Unknown command' in run('unknown', '--help', ok=False).stderr
     assert 'Unknown ddi command' in run('ddi', 'unknown', '--help', ok=False).stderr
     # Help must not read runtime configuration or contact/start a server.
     help_env = dict(os.environ, XDB_PORT='invalid', XDB_EXECUTABLE='/nonexistent/xdb')
-    for args in ((), ('--help',), ('server', '--help'), ('pair', '--help')):
+    for args in ((), ('--help',), ('ddi',), ('server', '--help'), ('pair', '--help')):
         result = subprocess.run([exe, *args], env=help_env, text=True, capture_output=True,
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr
@@ -99,6 +122,42 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                for name, p in server.calls)
     run('ddi', 'prepare', '--wifi')
     assert any(name == 'ddi.prepare' and p['udid'] == 'mock-iphone' for name, p in server.calls)
+    before_ddi = len(server.calls)
+    assert 'DDI mounted: Personalized (mock-iphone)' in run('ddi', 'status', '--wifi').stdout
+    assert 'DDI removed: mock-iphone' in run('ddi', 'remove', '--wifi').stdout
+    assert any(name == 'ddi.status' and p == dict(udid='mock-iphone', wifi='auto')
+               for name, p in server.calls[before_ddi:])
+    assert any(name == 'ddi.remove' and p == dict(udid='mock-iphone', wifi='auto')
+               for name, p in server.calls[before_ddi:])
+    assert all(name != 'ddi.prepare' for name, _ in server.calls[before_ddi:])
+    ddi_mounted = False
+    installed_only = run('-s', 'mock-iphone', 'ddi', 'status', '--wifi').stdout
+    assert 'DDI not mounted' in installed_only and 'DDI Cryptex installed: com.apple.MobileAsset.DDI 27.1.5228.8' in installed_only
+    installed_json = json.loads(run('-s', 'mock-iphone', 'ddi', 'status', '--json').stdout)['result']
+    assert not installed_json['mounted'] and installed_json['cryptex_installed']
+    assert 'DDI removed: mock-iphone' in run('ddi', 'remove', '--wifi').stdout
+    cryptex_installed = False
+    assert 'DDI not mounted: mock-iphone' in run('-s', 'mock-iphone', 'ddi', 'status', '--usb').stdout
+    assert 'DDI already absent: mock-iphone' in run('ddi', 'remove', '--usb').stdout
+    status = json.loads(run('ddi', 'status', '--json').stdout)
+    assert status['ok'] and status['result']['mounted'] is False
+    assert 'changed' not in status['result']
+    removed = json.loads(run('ddi', 'remove', '--json').stdout)
+    assert removed['ok'] and removed['result']['changed'] is False
+    assert removed['result']['mounted'] is False and removed['result']['cryptex_installed'] is False
+    cryptex_installed = None
+    assert 'DDI Cryptex: unavailable' in run('-s', 'mock-iphone', 'ddi', 'status').stdout
+    cryptex_installed = False
+    assert 'Expected ddi prepare/status/remove' in run('ddi', 'unmount', ok=False).stderr
+    assert all('wifi' not in p for name, p in server.calls[-2:] if name.startswith('ddi.'))
+    ddi_error = True
+    assert 'ImageBusy' in run('ddi', 'remove', ok=False).stderr
+    failure = json.loads(run('-s', 'mock-iphone', 'ddi', 'status', '--json', ok=False).stdout)
+    assert not failure['ok'] and failure['error']['message'] == 'ImageBusy'
+    ddi_error = False
+    for action, flag in (('status', '--replace'), ('remove', '--replace'), ('status', '--cache-dir')):
+        flags = [flag, tmp] if flag == '--cache-dir' else [flag]
+        assert 'apply only to ddi prepare' in run('ddi', action, *flags, ok=False).stderr
     # Multiple endpoints / duplicate identified rows still refer to one UDID.
     devices.append(copy.deepcopy(phone))
     run('screenshot', target)
@@ -107,6 +166,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     result = run('screenshot', target, ok=False)
     assert 'Multiple devices' in result.stderr and 'another-phone' in result.stderr
     assert server.methods().count('connection.open') == before
+    for action in ('status', 'remove'):
+        before = server.methods().count('ddi.' + action)
+        assert 'Multiple devices' in run('ddi', action, ok=False).stderr
+        assert server.methods().count('ddi.' + action) == before
+        run('-s', 'mock-iphone', 'ddi', action, '--wifi', 'fe80::1%4')
+        assert server.calls[-1] == ('ddi.' + action, dict(udid='mock-iphone', wifi='fe80::1%4'))
     run('-s', 'mock-iphone', 'screenshot', target)
     devices[-1]['candidates'][0]['address'] = '10.0.0.2'
     run('screenshot', target, '--wifi', 'fe80::1%4')
@@ -116,6 +181,8 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'pair it first' in run('screenshot', target, ok=False).stderr
     devices.clear()
     assert 'No device found' in run('screenshot', target, ok=False).stderr
+    for action in ('status', 'remove'):
+        assert 'No device found' in run('ddi', action, ok=False).stderr
     cancelled = True
     assert 'cancelled' in run('screenshot', target, ok=False).stderr
-print('PASS: concise/detailed/JSON listing, automatic selection, transport, ambiguity and no-device errors')
+print('PASS: device listing, DDI commands, JSON results, transport and automatic selection errors')

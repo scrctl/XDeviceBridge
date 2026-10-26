@@ -100,6 +100,8 @@ is a quick summary rather than the full method contract.
 | `pair` | `transport`: wifi/usb; optional `udid`; `timeout_ms`: 1..300000 | UDID and reused status; progress/PIN events |
 | `ddi.download` | `os_version`, optional `product_type`, `cache_directory`, `timeout_seconds` | Build/cache metadata; progress events |
 | `ddi.prepare` | `udid`, optional `wifi`, `port`, `cache_directory`, `replace`, download/install timeout seconds | Prepared status; progress events |
+| `ddi.status` | `udid`, optional `wifi`, `port` | Mount state and evidence; independent installed DDI Cryptex metadata |
+| `ddi.remove` | `udid`, optional `wifi`, `port` | Verified absent state and whether this request removed the DDI |
 | `connection.open` | `udid`, optional `wifi`: auto/address, `port`: device port | Acquires a connection-owned session |
 | `connection.close` | none | Releases services, inputs and device lease |
 | `device.info` | none | Device UDID, OS version, model |
@@ -131,8 +133,21 @@ the discovery reason (`record_present`, `incomplete_record`, `identifier_hint`,
 candidate `paired` boolean still only describes a complete matching local record.
 No active connection or pairing is performed by this listing request.
 
-CLI-only selection allows omitting `-s` for `screenshot` / `ddi prepare`; explicit
-SDK UDIDs and the request formats remain unchanged.
+CLI-only selection allows omitting `-s` for `screenshot` / `ddi prepare` /
+`ddi status` / `ddi remove` when exactly one identified device is found. SDK DDI
+methods require an explicit nonempty UDID.
+
+`ddi.status` queries mount evidence and the DDI Cryptex installation independently,
+without downloading or installing. `cryptex_installed:null` means that service is
+not advertised; queried installation failures return errors. `ddi.remove` reverses
+preparation: uninstall the reported DDI Cryptex at its live version, or otherwise
+unmount the Classic/Personalized image. Verifies absence; already absent is
+success. Preserves host caches, pairing records and unrelated Cryptexes; does not
+request a nonce roll.
+Both methods need an exclusive lease; close active sessions first. Empty `wifi`
+uses USB, `wifi:"auto"` uses paired Wi-Fi discovery. A reported OS category is not
+the installed image's identity. Errors or cancellation can follow a device-side
+change; query status before retrying an uncertain removal.
 
 Touch coordinates refer to the device's panel axes, not a rotated/cropped client
 window. BGRA frame dimensions can include codec padding. `display` metadata comes

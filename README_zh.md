@@ -120,6 +120,7 @@ xdb pair --wifi
 # 然后在手机输入 xdb 显示的一次性配对码。
 xdb pair --usb
 xdb -s '<UDID>' ddi prepare --wifi
+xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
@@ -137,7 +138,15 @@ xdb -s '<UDID>' screenshot screen.png --wifi
 列举设备不会主动连接。`pairing:record_present` 不代表手机接受了新的连接，
 USB 枚举成功也不代表已获得信任。无法识别身份的设备显示为 `(unidentified)`。
 
-对于 `screenshot` 和 `ddi prepare`，发现结果中只有一台已识别设备时可省略 `-s`。
+使用 `xdb ddi status` 分别查询挂载状态和 DDI Cryptex 安装信息。
+`xdb ddi remove` 执行设备准备的反向操作：按实际版本卸载 DDI Cryptex，
+或取消 Classic／Personalized 镜像挂载，并验证已移除。已经不存在时直接成功。
+保留配对记录、电脑缓存和其他 Cryptex，不请求更新 nonce；之后可用 `xdb ddi prepare` 再次准备。
+两者默认使用 USB，加 `--wifi` 使用已配对的无线发现，加 `--json` 获取结构化结果。
+执行前应关闭活跃的设备会话。
+
+对于 `screenshot`、`ddi prepare`、`ddi status` 和 `ddi remove`，
+发现结果中只有一台已识别设备时可省略 `-s`。
 `--usb` / `--wifi` 限制发现所用的传输方式，指定 Wi-Fi 地址还会进一步筛选候选项。
 同一 UDID 的多个地址只算一台设备。存在多台设备（包括身份未知的设备）时需要明确选择；
 身份未知的设备应先完成配对。

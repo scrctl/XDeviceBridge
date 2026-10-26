@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
             else
                 args.push_back(a);
         }
-        if (show_help) {
+        if (show_help || (args.size() == 1 && args[0] == "ddi")) {
             xdb::cli::print_help(args);
             return 0;
         }
@@ -194,6 +194,13 @@ int main(int argc, char **argv) {
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
             args[0] != "rpc" && args[0] != "rpc-shell")
             throw std::invalid_argument("Unknown command; run xdb --help");
+        if (args[0] == "ddi") {
+            if (args.size() != 2 ||
+                (args[1] != "prepare" && args[1] != "status" && args[1] != "remove"))
+                throw std::invalid_argument("Expected ddi prepare/status/remove; run xdb ddi --help");
+            if (args[1] != "prepare" && (replace || !cache.empty()))
+                throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
+        }
         if (!dir.empty() && !xdb_client_start_server(port, dir.c_str())) {
             std::cerr << xdb_last_error() << '\n';
             return 1;
@@ -234,6 +241,24 @@ int main(int argc, char **argv) {
                     print_devices(value["result"], long_output);
                 else if (method == "pair")
                     std::cout << "Paired: " << value["result"].value("udid", std::string()) << '\n';
+                else if (method == "ddi.status") {
+                    const auto &state = value["result"];
+                    if (state.at("mounted").get<bool>())
+                        std::cout << "DDI mounted: " << state.at("image_type").get<std::string>()
+                                  << " (" << state.at("udid").get<std::string>() << ")\n";
+                    else
+                        std::cout << "DDI not mounted: " << state.at("udid").get<std::string>() << '\n';
+                    const auto installed = state.value("cryptex_installed", Json(nullptr));
+                    if (installed == true)
+                        std::cout << "DDI Cryptex installed: " << state.at("cryptex_identifier").get<std::string>()
+                                  << " " << state.at("cryptex_version").get<std::string>() << '\n';
+                    else
+                        std::cout << "DDI Cryptex: " << (installed.is_null() ? "unavailable" : "not installed")
+                                  << '\n';
+                } else if (method == "ddi.remove")
+                    std::cout << (value["result"].at("changed").get<bool>() ? "DDI removed: "
+                                                                          : "DDI already absent: ")
+                              << value["result"].at("udid").get<std::string>() << '\n';
                 else
                     std::cout << "OK\n";
             }
@@ -284,9 +309,8 @@ int main(int argc, char **argv) {
         }
         if (args[0] != "screenshot" && args[0] != "ddi")
             throw std::invalid_argument("Unknown command; run xdb --help");
-        if ((args[0] == "screenshot" && args.size() != 2) ||
-            (args[0] == "ddi" && (args.size() != 2 || args[1] != "prepare")))
-            throw std::invalid_argument("Expected screenshot FILE or ddi prepare");
+        if (args[0] == "screenshot" && args.size() != 2)
+            throw std::invalid_argument("Expected screenshot FILE");
         if (serial.empty()) {
             Json options = {{"transport", usb ? "usb" : wifi ? "wifi" : "auto"}};
             if (timeout >= 0)
@@ -329,11 +353,13 @@ int main(int argc, char **argv) {
         }
         if (wifi)
             params["wifi"] = wifi_address;
-        if (args[0] == "ddi" && args.size() == 2 && args[1] == "prepare") {
-            params["replace"] = replace;
-            if (!cache.empty())
-                params["cache_directory"] = cache;
-            return request("ddi.prepare", params).value("ok", false) ? 0 : 1;
+        if (args[0] == "ddi") {
+            if (args[1] == "prepare") {
+                params["replace"] = replace;
+                if (!cache.empty())
+                    params["cache_directory"] = cache;
+            }
+            return request("ddi." + args[1], params).value("ok", false) ? 0 : 1;
         }
         if (args[0] == "screenshot" && args.size() == 2) {
             output = args[1];

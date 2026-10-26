@@ -172,7 +172,7 @@ Manifest selection is not a claim that every phone with that version is supporte
 | Param | Type / default |
 | --- | --- |
 | udid | nonempty string **required** |
-| wifi | string; default empty = USB-first, then paired Wi-Fi; auto = Wi-Fi discovery; explicit address = Wi-Fi endpoint |
+| wifi | string; default empty = USB; auto = paired Wi-Fi discovery; explicit address = Wi-Fi endpoint |
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
 | cache_directory | string; default empty = built-in cache selection |
 | replace | bool; default false |
@@ -185,6 +185,65 @@ DDI; otherwise may download, request Apple personalization and install. Explicit
 replacement can alter the phone's mounted developer image. Cancellation/timeout
 is not transactional rollback. A prepared image is separate from availability of
 video/audio/input services; see DDI/device validation documentation.
+
+### `ddi.status`
+
+| Param | Type / default |
+| --- | --- |
+| udid | nonempty string **required** |
+| wifi | string; default empty = USB; auto = paired Wi-Fi discovery; explicit address = Wi-Fi endpoint |
+| port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
+
+No device session needed; requires an exclusive device lease, so close existing
+sessions first. Connects and queries the image mounter plus installed DDI Cryptex
+metadata when that service is advertised. Does not download, sign, install,
+remove or compare against a download catalog. Result:
+`{udid:string,os_version:string,kind:string,image_type:string,mounted:bool,
+verification:string,cryptex_installed:bool|null,cryptex_identifier:string,
+cryptex_version:string}`.
+
+`kind` is the OS-selected download category (`classic`, `personalized`, `cryptex`),
+not the mounted image's build or identity. `image_type` is the queried service
+image type (`Developer` or `Personalized`; Cryptex also appears as `Personalized`).
+`verification` reports `LookupImage signature` or `CopyDevices entry` when mounted,
+otherwise an empty string. This observes mount evidence, not compatibility with
+any particular downloaded image.
+
+`cryptex_installed` is independently queried through `cryptexd`; an installed DDI
+can exist without a current mount. Its identifier and version are included only
+when installed (otherwise empty strings). If the service is not advertised,
+`cryptex_installed` is null; it is not a negative query result. A Cryptex OS target
+requires that query to be available and otherwise fails. Modern USB connections
+also establish RSD to inspect the actual installation, independent of OS download
+policy. Connection stages and the shared query/removal phase have bounded
+30-second budgets and support cancellation. Unverifiable replies or failed
+queries return `operation_failed`, never fabricated absence. An occupied device
+returns `device_busy`.
+
+### `ddi.remove`
+
+Parameters and exclusive lease requirements are the same as `ddi.status`.
+Reverses device preparation without deleting pairing records or host caches:
+
+- If `cryptexd` reports `com.apple.MobileAsset.DDI`, sends `uninstall` scoped to
+  its reported installed version and verifies no DDI installation remains.
+  Does not remove unrelated Cryptexes or guess a version from the download catalog.
+- Otherwise, unmounts the Classic/Personalized image through the image mounter
+  (`/Developer` or `/System/Developer`) and verifies its absence. This also handles
+  an image-mounter DDI on a Cryptex-capable system.
+
+An already absent DDI succeeds without a removal mutation. After removal, verifies
+mount absence and rechecks the Cryptex installation where available. A remaining
+mount after Cryptex removal is an error, not permission to try a second removal
+mechanism. Returns the status fields above with `mounted:false`, no installed
+Cryptex reported, empty verification/identifier/version, plus `changed:bool`.
+`changed:true` means this request performed removal and verified the result.
+
+Does not roll a personalization nonce, download assets or uninstall applications.
+Use `ddi.prepare` to prepare the device again. This reverses DDI preparation's
+result; it does not restore an image that an earlier `prepare --replace` replaced.
+Cancellation or a lost reply can follow a device-side change: query `ddi.status`
+before retrying. No automatic retry or rollback is performed.
 
 ## Connections and display
 

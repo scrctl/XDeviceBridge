@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <string_view>
 
 namespace xdb::ddi {
 struct CryptexInstallOptions {
@@ -26,12 +27,22 @@ struct CryptexInstallResult {
 bool query_installed_cryptex(remote::Device &, std::optional<CryptexInstallResult> &,
                              const CryptexInstallOptions &, std::string &error);
 
+// Removes only com.apple.MobileAsset.DDI at its reported installed version.
+// Already absent is success; verifies copy-installed no longer reports a DDI.
+// Never rolls a nonce or retries an uncertain uninstall.
+bool remove_ddi_cryptex(remote::Device &, const CryptexInstallOptions &,
+                        bool &changed, std::string &error);
+
 // Does not retry uncertain installs, or remove unrelated cryptexes. An explicit
 // replacement is performed only after assets and an Apple ticket are ready.
 std::optional<CryptexInstallResult> install_cryptex(
     remote::Device &, const DownloadResult &, const DownloadTarget &,
     const CryptexInstallOptions &, std::string &error);
 namespace detail {
+// Bounded production invocations return the unwrapped argv; offline tests inject replies.
+using CryptexInvoke = std::function<bool(std::string_view, const xpc::Value &, xpc::Value &, std::string &)>;
+bool parse_installed_cryptex(const xpc::Value &, std::optional<CryptexInstallResult> &, std::string &error);
+bool remove_ddi_cryptex(const CryptexInvoke &, bool &changed, std::string &error);
 struct CryptexMetadata {
     plist::Value identity;
     xpc::Value properties;

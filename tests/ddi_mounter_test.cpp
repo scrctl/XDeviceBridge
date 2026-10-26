@@ -76,6 +76,8 @@ struct Fake {
     bool missing_post_mount = false, oversized = false, after_mount = false;
     bool attached_copy_entry = false, copy_entry_unmounted = false, wrong_mount_path = false;
     bool missing_copy_mount_state = false, missing_copy_mount_path = false;
+    bool reject_unmount = false, retain_mount = false;
+    std::string unmount_path;
     int reconnects = 0, nonce_queries = 0, writes = 0;
     uint64_t last_budget = 0;
     Fake() {
@@ -113,7 +115,14 @@ struct Fake {
             if (name == "QueryNonce") {
                 auto reply = V::Dict(); reply.set("PersonalizationNonce", V::OfData({static_cast<uint8_t>(nonce_changed && ++nonce_queries > 1 ? 8 : 7)})); return reply;
             }
-            if (name == "UnmountImage") { mounted = false; return status("Complete"); }
+            if (name == "UnmountImage") {
+                unmount_path = request.find("MountPath")->string;
+                if (reject_unmount) {
+                    auto reply = V::Dict(); reply.set("Error", V::Str("ImageBusy")); return reply;
+                }
+                if (!retain_mount) mounted = false;
+                return status("Complete");
+            }
             if (name == "ReceiveBytes") { expected_signature = request.find("ImageSignature")->data; return status(bad_ack ? "Complete" : "ReceiveBytesAck"); }
             if (name == "MountImage") { after_mount = true; mounted = !missing_post_mount; return status(bad_mount ? "Failed" : "Complete"); }
             throw std::runtime_error("unexpected fake command");
@@ -267,6 +276,39 @@ int main() {
     {
         Fake fake; fake.oversized = true;
         check(!ddi::inspect_mounted(fake.service, ddi::Kind::Classic, {}, error) && error.size() < 1024, "Oversized reply rejected with bounded diagnostic");
+    }
+    for (const auto kind : {ddi::Kind::Classic, ddi::Kind::Personalized, ddi::Kind::Cryptex}) {
+        Fake fake;
+        fake.expected_signature = kind == ddi::Kind::Classic ? std::vector<uint8_t>{42}
+                                                            : std::vector<uint8_t>{1,2,3};
+        fake.empty_signature = kind != ddi::Kind::Classic;
+        bool changed = true;
+        check(ddi::unmount_current(fake.service, kind, {}, error, &changed) && !changed &&
+              !fake.called("UnmountImage"), "Already absent succeeds without sending an unmount request");
+        fake.mounted = true;
+        fake.commands.clear();
+        check(ddi::unmount_current(fake.service, kind, {}, error, &changed) && changed && !fake.mounted &&
+              fake.unmount_path == (kind == ddi::Kind::Classic ? "/Developer" : "/System/Developer") &&
+              std::count(fake.commands.begin(), fake.commands.end(), "LookupImage") == 2 &&
+              !fake.called("ReceiveBytes") && !fake.called("MountImage"),
+              "Explicit unmount uses the category path and verifies absence without upload or mount");
+        fake.mounted = true;
+        fake.retain_mount = true;
+        check(!ddi::unmount_current(fake.service, kind, {}, error, &changed) && !changed &&
+              error.find("remains mounted") != std::string::npos,
+              "A successful command reply cannot hide a still-mounted image");
+        fake.reject_unmount = true;
+        check(!ddi::unmount_current(fake.service, kind, {}, error, &changed) && !changed && error == "ImageBusy",
+              "Device unmount rejection is propagated without claiming removal");
+        fake.reject_unmount = false;
+        fake.oversized = true;
+        fake.commands.clear();
+        check(!ddi::unmount_current(fake.service, kind, {}, error, &changed) && !changed &&
+              !fake.called("UnmountImage"), "Unverifiable status cannot trigger unmount");
+        fake.commands.clear();
+        ddi::MountOptions cancelled; cancelled.cancelled = [] { return true; };
+        check(!ddi::unmount_current(fake.service, kind, cancelled, error, &changed) && !changed &&
+              fake.commands.empty(), "Cancellation prevents inspection and unmount");
     }
     return failures ? 1 : 0;
 }
