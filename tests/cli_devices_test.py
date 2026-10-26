@@ -25,8 +25,21 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                                        interface='', connection_type='USB',
                                        paired=False, pairing='unknown'))
     cancelled = False
+    ddi_mounted = True
+    ddi_error = False
 
     def handle(name, params):
+        if name in ('ddi.status', 'ddi.unmount'):
+            with server.lock:
+                server.calls.append((name, params))
+            if ddi_error:
+                raise ValueError('ImageBusy')
+            result = dict(udid=params['udid'], os_version='27.0.1', kind='cryptex',
+                          image_type='Personalized', mounted=ddi_mounted if name == 'ddi.status' else False,
+                          verification='CopyDevices entry' if ddi_mounted and name == 'ddi.status' else '')
+            if name == 'ddi.unmount':
+                result['changed'] = ddi_mounted
+            return result, b''
         if name == 'devices':
             with server.lock:
                 server.calls.append((name, params))
@@ -44,7 +57,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     summary = run('--help').stdout
     assert 'Commands:' in summary and 'Options:' in summary
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
-    for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'),
+    for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'unmount'),
                     ('screenshot',), ('start-server',), ('kill-server',), ('server',),
                     ('rpc',), ('rpc-shell',)):
         args = command if command == ('-h',) else (*command, '--help')
@@ -99,6 +112,31 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                for name, p in server.calls)
     run('ddi', 'prepare', '--wifi')
     assert any(name == 'ddi.prepare' and p['udid'] == 'mock-iphone' for name, p in server.calls)
+    before_ddi = len(server.calls)
+    assert 'DDI mounted: Personalized (mock-iphone)' in run('ddi', 'status', '--wifi').stdout
+    assert 'DDI unmounted: mock-iphone' in run('ddi', 'unmount', '--wifi').stdout
+    assert any(name == 'ddi.status' and p == dict(udid='mock-iphone', wifi='auto')
+               for name, p in server.calls[before_ddi:])
+    assert any(name == 'ddi.unmount' and p == dict(udid='mock-iphone', wifi='auto')
+               for name, p in server.calls[before_ddi:])
+    assert all(name != 'ddi.prepare' for name, _ in server.calls[before_ddi:])
+    ddi_mounted = False
+    assert 'DDI not mounted: mock-iphone' in run('-s', 'mock-iphone', 'ddi', 'status', '--usb').stdout
+    assert 'DDI already unmounted: mock-iphone' in run('ddi', 'unmount', '--usb').stdout
+    status = json.loads(run('ddi', 'status', '--json').stdout)
+    assert status['ok'] and status['result']['mounted'] is False
+    assert 'changed' not in status['result']
+    unmounted = json.loads(run('ddi', 'unmount', '--json').stdout)
+    assert unmounted['ok'] and unmounted['result']['changed'] is False
+    assert all('wifi' not in p for name, p in server.calls[-2:] if name.startswith('ddi.'))
+    ddi_error = True
+    assert 'ImageBusy' in run('ddi', 'unmount', ok=False).stderr
+    failure = json.loads(run('-s', 'mock-iphone', 'ddi', 'status', '--json', ok=False).stdout)
+    assert not failure['ok'] and failure['error']['message'] == 'ImageBusy'
+    ddi_error = False
+    for action, flag in (('status', '--replace'), ('unmount', '--replace'), ('status', '--cache-dir')):
+        flags = [flag, tmp] if flag == '--cache-dir' else [flag]
+        assert 'apply only to ddi prepare' in run('ddi', action, *flags, ok=False).stderr
     # Multiple endpoints / duplicate identified rows still refer to one UDID.
     devices.append(copy.deepcopy(phone))
     run('screenshot', target)
@@ -107,6 +145,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     result = run('screenshot', target, ok=False)
     assert 'Multiple devices' in result.stderr and 'another-phone' in result.stderr
     assert server.methods().count('connection.open') == before
+    for action in ('status', 'unmount'):
+        before = server.methods().count('ddi.' + action)
+        assert 'Multiple devices' in run('ddi', action, ok=False).stderr
+        assert server.methods().count('ddi.' + action) == before
+        run('-s', 'mock-iphone', 'ddi', action, '--wifi', 'fe80::1%4')
+        assert server.calls[-1] == ('ddi.' + action, dict(udid='mock-iphone', wifi='fe80::1%4'))
     run('-s', 'mock-iphone', 'screenshot', target)
     devices[-1]['candidates'][0]['address'] = '10.0.0.2'
     run('screenshot', target, '--wifi', 'fe80::1%4')
@@ -116,6 +160,8 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'pair it first' in run('screenshot', target, ok=False).stderr
     devices.clear()
     assert 'No device found' in run('screenshot', target, ok=False).stderr
+    for action in ('status', 'unmount'):
+        assert 'No device found' in run('ddi', action, ok=False).stderr
     cancelled = True
     assert 'cancelled' in run('screenshot', target, ok=False).stderr
-print('PASS: concise/detailed/JSON listing, automatic selection, transport, ambiguity and no-device errors')
+print('PASS: device listing, DDI commands, JSON results, transport and automatic selection errors')

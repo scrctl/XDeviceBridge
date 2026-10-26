@@ -172,7 +172,7 @@ Manifest selection is not a claim that every phone with that version is supporte
 | Param | Type / default |
 | --- | --- |
 | udid | nonempty string **required** |
-| wifi | string; default empty = USB-first, then paired Wi-Fi; auto = Wi-Fi discovery; explicit address = Wi-Fi endpoint |
+| wifi | string; default empty = USB; auto = paired Wi-Fi discovery; explicit address = Wi-Fi endpoint |
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
 | cache_directory | string; default empty = built-in cache selection |
 | replace | bool; default false |
@@ -185,6 +185,46 @@ DDI; otherwise may download, request Apple personalization and install. Explicit
 replacement can alter the phone's mounted developer image. Cancellation/timeout
 is not transactional rollback. A prepared image is separate from availability of
 video/audio/input services; see DDI/device validation documentation.
+
+### `ddi.status`
+
+| Param | Type / default |
+| --- | --- |
+| udid | nonempty string **required** |
+| wifi | string; default empty = USB; auto = paired Wi-Fi discovery; explicit address = Wi-Fi endpoint |
+| port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
+
+No device session needed; requires an exclusive device lease, so close existing
+sessions first. Connects to the device and queries mobile_image_mounter without
+downloading, signing, mounting or comparing against a download catalog. Result:
+`{udid:string,os_version:string,kind:string,image_type:string,mounted:bool,
+verification:string}`. `kind` is the OS-selected category (`classic`,
+`personalized`, `cryptex`), not the mounted image's build or identity.
+`image_type` is the queried service type (`Developer` or `Personalized`; Cryptex
+also appears as `Personalized`). `verification` reports `LookupImage signature`
+or `CopyDevices entry` when mounted, otherwise an empty string. This observes
+mount evidence, not compatibility with a particular downloaded image.
+
+Connection preparation, service opening and service queries each use bounded
+30-second budgets and support cancellation. Unverifiable replies and transport
+failures return `operation_failed`, never a fabricated `mounted:false`.
+An occupied device returns `device_busy`.
+
+### `ddi.unmount`
+
+Parameters and exclusive lease requirements are the same as `ddi.status`.
+Unmounts the OS category's developer mount (`/Developer` for Classic,
+`/System/Developer` for Personalized/Cryptex) and verifies it is absent. An already
+absent image succeeds without sending `UnmountImage`. Returns the same status
+fields with `mounted:false`, empty `verification`, and `changed:bool`: true only
+when this request removed a mounted image and verified its absence.
+
+Does not delete host caches, remove an installed Cryptex or roll a personalization
+nonce. Use `ddi.prepare` to mount again; an installed Cryptex may require explicit
+`replace:true` to reinstall. A phone can reject the unmount or remount an image;
+success is a snapshot of the verified state. Cancellation or a lost reply may
+follow a device-side change: check `ddi.status` before retrying. No automatic
+retry or rollback is performed.
 
 ## Connections and display
 

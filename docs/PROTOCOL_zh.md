@@ -95,6 +95,8 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `pair` | `transport`：wifi/usb；可选 `udid`；`timeout_ms`：1..300000 | UDID 和复用状态；进度／PIN 事件 |
 | `ddi.download` | `os_version`，可选 `product_type`、`cache_directory`、`timeout_seconds` | 构建／缓存元数据；进度事件 |
 | `ddi.prepare` | `udid`，可选 `wifi`、`port`、`cache_directory`、`replace`、下载／安装超时秒数 | 准备状态；进度事件 |
+| `ddi.status` | `udid`，可选 `wifi`、`port` | 系统对应的镜像类别、服务镜像类型、挂载状态和验证依据 |
+| `ddi.unmount` | `udid`，可选 `wifi`、`port` | 验证后的未挂载状态，以及本次是否执行了卸载 |
 | `connection.open` | `udid`，可选 `wifi`：auto/地址，`port`：设备端口 | 获取连接持有的会话 |
 | `connection.close` | 无 | 释放服务、输入和设备租约 |
 | `device.info` | 无 | 设备 UDID、系统版本、型号 |
@@ -126,8 +128,16 @@ connected 表示活跃、已认证的服务端会话，不是刚执行的存活�
 已有候选项 `paired` 布尔值仍仅描述完整且匹配的本地记录。
 列举请求不会主动连接或配对。
 
-仅 CLI 的设备选择允许 `screenshot`／`ddi prepare` 省略 `-s`；
-显式 SDK UDID 和请求格式不变。
+仅 CLI 的设备选择允许 `screenshot`／`ddi prepare`／`ddi status`／`ddi unmount`
+在只发现一台已识别设备时省略 `-s`。SDK 的 DDI 方法要求显式传入非空 UDID。
+
+`ddi.status` 连接设备并查询挂载证据，不下载或安装。
+`ddi.unmount` 在已经未挂载时直接成功，否则执行卸载并验证镜像已移除。
+两者都需要独占设备租约，应先关闭活跃的设备会话。
+`wifi` 为空时使用 USB，`wifi:"auto"` 使用已配对的 Wi-Fi 发现。
+卸载保留电脑缓存和设备上已安装的 Cryptex 资源；重新挂载已安装的 Cryptex
+可能需要 `ddi prepare --replace`。返回的系统镜像类别不代表当前镜像的构建身份。
+报错或取消前设备状态可能已经改变，应先查询状态再决定是否重试卸载。
 
 触摸坐标针对设备面板坐标轴，不是经过旋转或裁剪的客户端窗口。
 BGRA 帧可能包含编解码填充。`display` 元数据来自设备显示订阅，

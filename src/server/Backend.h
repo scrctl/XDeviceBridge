@@ -19,6 +19,7 @@ struct PrepareOptions {
     int ddi_download_timeout = 300, ddi_install_timeout = 300;
 };
 bool prepare_ddi(const PrepareOptions &, std::string &, const Event &, const Cancel &);
+std::optional<Json> manage_ddi(const PrepareOptions &, bool unmount, std::string &, const Cancel &);
 std::optional<remote::Device> open_device(const std::string &, const std::string &, std::string &, uint16_t,
                                           const Cancel &, const std::string &);
 struct Registry {

@@ -158,7 +158,8 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     std::string error;
     if (cancel())
         return Reply::failure("cancelled", "Request cancelled");
-    if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare")
+    if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare" ||
+        method == "ddi.status" || method == "ddi.unmount")
         return handle_management(method, p, event, cancel);
     if (method == "connection.close" || method == "connection.attach" || method == "connection.open")
         return handle_connection(method, p, cancel);
@@ -562,22 +563,30 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         r.result = {{"build", image->build}, {"cache_hit", image->cache_hit}};
         return r;
     }
-    if (method == "ddi.prepare") {
+    if (method == "ddi.prepare" || method == "ddi.status" || method == "ddi.unmount") {
         PrepareOptions o;
         o.serial = p.at("udid").get<std::string>();
         o.wifi = p.value("wifi", std::string());
         if (o.serial.empty())
             return Reply::failure("invalid_params", "UDID is required");
         if (!registry_.acquire(o.serial))
-            return Reply::failure("device_busy", "Close the device session before preparing DDI");
+            return Reply::failure("device_busy", "Close the device session before managing DDI");
         struct Release {
             Registry &r;
             std::string id;
             ~Release() { r.release(id); }
         } release{registry_, o.serial};
         o.data_directory = directory_;
-        o.ddi_directory = p.value("cache_directory", std::string());
         o.wifi_port = uint16_t(bounded(p, "port", 49152, 1, 65535));
+        if (method != "ddi.prepare") {
+            auto result = manage_ddi(o, method == "ddi.unmount", error, cancel);
+            if (!result)
+                return fail(error);
+            Reply r;
+            r.result = std::move(*result);
+            return r;
+        }
+        o.ddi_directory = p.value("cache_directory", std::string());
         o.replace_ddi = p.value("replace", false);
         o.ddi_download_timeout = bounded(p, "download_timeout_seconds", 300, 1, 3600);
         o.ddi_install_timeout = bounded(p, "install_timeout_seconds", 300, 1, 3600);

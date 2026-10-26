@@ -100,6 +100,8 @@ is a quick summary rather than the full method contract.
 | `pair` | `transport`: wifi/usb; optional `udid`; `timeout_ms`: 1..300000 | UDID and reused status; progress/PIN events |
 | `ddi.download` | `os_version`, optional `product_type`, `cache_directory`, `timeout_seconds` | Build/cache metadata; progress events |
 | `ddi.prepare` | `udid`, optional `wifi`, `port`, `cache_directory`, `replace`, download/install timeout seconds | Prepared status; progress events |
+| `ddi.status` | `udid`, optional `wifi`, `port` | OS category, image type, mounted state and verification evidence |
+| `ddi.unmount` | `udid`, optional `wifi`, `port` | Verified absent state and whether this request removed an image |
 | `connection.open` | `udid`, optional `wifi`: auto/address, `port`: device port | Acquires a connection-owned session |
 | `connection.close` | none | Releases services, inputs and device lease |
 | `device.info` | none | Device UDID, OS version, model |
@@ -131,8 +133,18 @@ the discovery reason (`record_present`, `incomplete_record`, `identifier_hint`,
 candidate `paired` boolean still only describes a complete matching local record.
 No active connection or pairing is performed by this listing request.
 
-CLI-only selection allows omitting `-s` for `screenshot` / `ddi prepare`; explicit
-SDK UDIDs and the request formats remain unchanged.
+CLI-only selection allows omitting `-s` for `screenshot` / `ddi prepare` /
+`ddi status` / `ddi unmount` when exactly one identified device is found. SDK DDI
+methods require an explicit nonempty UDID.
+
+`ddi.status` connects and queries mount evidence without downloading or installing.
+`ddi.unmount` succeeds if already absent and otherwise verifies removal. Both
+require an exclusive device lease; close active sessions first. Empty `wifi` uses
+USB, `wifi:"auto"` uses paired Wi-Fi discovery. Unmounting preserves host caches
+and installed Cryptex assets; remounting an installed Cryptex may require
+`ddi prepare --replace`. A reported OS category is not the mounted build's
+identity. Errors or cancellation can follow a device-side change; query status
+before retrying an uncertain unmount.
 
 Touch coordinates refer to the device's panel axes, not a rotated/cropped client
 window. BGRA frame dimensions can include codec padding. `display` metadata comes

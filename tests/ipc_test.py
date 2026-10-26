@@ -97,6 +97,12 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
                 assert not unknown_input['ok'] and unknown_input['error']['code'] == 'unknown_method', unknown_input
             assert request(c, 'server.info')['ok'], 'rejecting unknown input must retain the RPC connection'
 
+            for method in ('ddi.status', 'ddi.unmount'):
+                for params in ({}, {'udid': ''}, {'udid': 'offline', 'port': 0},
+                               {'udid': 'offline', 'port': '49152'}):
+                    rejected = request(c, method, params)
+                    assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
+                assert request(c, 'server.info')['ok'], 'DDI parameter rejection poisoned connection'
             assert request(c,'server.info',{'future_optional_field':True})['ok']
             os.environ['XDB_PORT'] = str(port)
             default_client = client.xdb_client_connect(0,None,None)

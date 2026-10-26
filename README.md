@@ -122,6 +122,7 @@ xdb pair --wifi
 # Enter the one-time code printed by xdb on the phone.
 xdb pair --usb
 xdb -s '<UDID>' ddi prepare --wifi
+xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
@@ -142,8 +143,15 @@ Listing does not actively connect to devices. `pairing:record_present` never
 means the phone has accepted a new connection. USB trust is not inferred from
 USB enumeration. Unknown device identities appear as `(unidentified)`.
 
-For `screenshot` and `ddi prepare`, omit `-s` when discovery finds exactly one
-identified device. `--usb` / `--wifi` constrain that discovery, and an explicit
+Use `xdb ddi status` to query the device's mounted developer image and
+`xdb ddi unmount` to unmount it and verify removal. Both default to USB; add
+`--wifi` for paired Wi-Fi discovery. Close active device sessions first. Status
+does not download or install; unmount preserves host caches and installed
+Cryptex assets. To reinstall an installed Cryptex after unmounting, use
+`xdb ddi prepare --replace`. Add `--json` for structured results.
+
+For `screenshot`, `ddi prepare`, `ddi status` and `ddi unmount`, omit `-s` when
+discovery finds exactly one identified device. `--usb` / `--wifi` constrain that discovery, and an explicit
 Wi-Fi address further selects its matching candidate. Several addresses for the
 same UDID count as one device. Multiple devices, including unidentified ones,
 require explicit selection; an unidentified device must be paired first.

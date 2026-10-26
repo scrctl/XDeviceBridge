@@ -234,6 +234,17 @@ int main(int argc, char **argv) {
                     print_devices(value["result"], long_output);
                 else if (method == "pair")
                     std::cout << "Paired: " << value["result"].value("udid", std::string()) << '\n';
+                else if (method == "ddi.status") {
+                    const auto &state = value["result"];
+                    if (state.at("mounted").get<bool>())
+                        std::cout << "DDI mounted: " << state.at("image_type").get<std::string>()
+                                  << " (" << state.at("udid").get<std::string>() << ")\n";
+                    else
+                        std::cout << "DDI not mounted: " << state.at("udid").get<std::string>() << '\n';
+                } else if (method == "ddi.unmount")
+                    std::cout << (value["result"].at("changed").get<bool>() ? "DDI unmounted: "
+                                                                          : "DDI already unmounted: ")
+                              << value["result"].at("udid").get<std::string>() << '\n';
                 else
                     std::cout << "OK\n";
             }
@@ -285,8 +296,11 @@ int main(int argc, char **argv) {
         if (args[0] != "screenshot" && args[0] != "ddi")
             throw std::invalid_argument("Unknown command; run xdb --help");
         if ((args[0] == "screenshot" && args.size() != 2) ||
-            (args[0] == "ddi" && (args.size() != 2 || args[1] != "prepare")))
-            throw std::invalid_argument("Expected screenshot FILE or ddi prepare");
+            (args[0] == "ddi" && (args.size() != 2 ||
+             (args[1] != "prepare" && args[1] != "status" && args[1] != "unmount"))))
+            throw std::invalid_argument("Expected screenshot FILE or ddi prepare/status/unmount");
+        if (args[0] == "ddi" && args[1] != "prepare" && (replace || !cache.empty()))
+            throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
         if (serial.empty()) {
             Json options = {{"transport", usb ? "usb" : wifi ? "wifi" : "auto"}};
             if (timeout >= 0)
@@ -329,11 +343,13 @@ int main(int argc, char **argv) {
         }
         if (wifi)
             params["wifi"] = wifi_address;
-        if (args[0] == "ddi" && args.size() == 2 && args[1] == "prepare") {
-            params["replace"] = replace;
-            if (!cache.empty())
-                params["cache_directory"] = cache;
-            return request("ddi.prepare", params).value("ok", false) ? 0 : 1;
+        if (args[0] == "ddi") {
+            if (args[1] == "prepare") {
+                params["replace"] = replace;
+                if (!cache.empty())
+                    params["cache_directory"] = cache;
+            }
+            return request("ddi." + args[1], params).value("ok", false) ? 0 : 1;
         }
         if (args[0] == "screenshot" && args.size() == 2) {
             output = args[1];

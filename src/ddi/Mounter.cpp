@@ -227,9 +227,16 @@ std::optional<MountResult> inspect_mounted(PlistService &service, const Download
     }
     return detail::inspect_mounted_with_catalog(service, *catalog, options, error);
 }
-bool unmount_current(PlistService &service, Kind kind, const MountOptions &options, std::string &error) {
-    error.clear(); try { Session session(service, options); unmount(session, kind); return true; }
-    catch (const std::exception &e) { error = safe_text(e.what()); return false; }
+bool unmount_current(PlistService &service, Kind kind, const MountOptions &options, std::string &error, bool *changed) {
+    error.clear();
+    if (changed) *changed = false;
+    try {
+        Session session(service, options);
+        if (inspect(session, kind).state == MountState::NotMounted) return true;
+        unmount(session, kind);
+        if (changed) *changed = true;
+        return true;
+    } catch (const std::exception &e) { error = safe_text(e.what()); return false; }
 }
 namespace detail {
 std::optional<MountResult> mount_image_with_catalog(PlistService &service, const DownloadResult &download,
