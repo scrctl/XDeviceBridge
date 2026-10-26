@@ -31,6 +31,113 @@ std::string frame(const V &value) {
     std::string data{char(length >> 24), char(length >> 16), char(length >> 8), char(length)};
     return data + body;
 }
+V command(const char *name) { auto v = V::Dict(); v.set("Command", V::Str(name)); return v; }
+V status(const char *name) { auto v = V::Dict(); v.set("Status", V::Str(name)); return v; }
+class Stream final : public xdb::net::ByteStream {
+public:
+    std::deque<std::vector<uint8_t>> packets;
+    std::string sent;
+    bool fail_send = false;
+    void reply(const V &v) { const auto data = frame(v); packets.emplace_back(data.begin(), data.end()); }
+    bool send(std::string_view data, std::string &error) override {
+        if (fail_send) { error = "fake write failure"; return false; }
+        sent += data; return true;
+    }
+    bool recv(std::vector<uint8_t> &out, int, std::string &error, bool *timed_out) override {
+        if (timed_out) *timed_out = false;
+        if (packets.empty()) { error = "fake stream exhausted"; return false; }
+        out = std::move(packets.front()); packets.pop_front(); return true;
+    }
+};
+void graceful_close() {
+    for (int mode = 0; mode < 4; ++mode) {
+        Stream stream;
+        stream.reply(V::Dict());
+        if (mode == 0 || mode == 3) stream.reply(V::Dict());
+        if (mode == 1) { auto rejected = V::Dict(); rejected.set("Error", V::Str("UnknownCommand")); stream.reply(rejected); }
+        if (mode == 2) stream.packets.push_back({0, 0, 0, 0});
+        auto adapter = ddi::detail::service_transport_with_byte_stream(stream, [] {}, {});
+        auto service = adapter->service(); std::string error;
+        const auto query = command("LookupImage");
+        const auto response = service.request(query, Ms(1000), error);
+        const auto hangup = command("Hangup");
+        if (mode == 3) check(bool(service.request(hangup, Ms(1000), error)), "Explicit Hangup receives its reply");
+        error = "completed operation diagnostic";
+        adapter.reset();
+        check(response && stream.sent == frame(query) + frame(hangup) && stream.packets.empty() &&
+            error == "completed operation diagnostic",
+            "Teardown sends exactly one Hangup; empty, rejected or malformed replies cannot replace the operation result");
+    }
+}
+void upload_close() {
+    // Complete upload; partial upload; bytes sent but no completion; write
+    // failure; premature Complete despite missing bytes; invalid upload ACK.
+    for (int mode = 0; mode < 6; ++mode) {
+        Stream stream; stream.reply(status(mode == 5 ? "Unexpected" : "ReceiveBytesAck"));
+        auto adapter = ddi::detail::service_transport_with_byte_stream(stream, [] {}, {});
+        auto service = adapter->service(); std::string error;
+        auto upload = command("ReceiveBytes"); upload.set("ImageSize", V::Int(4));
+        check(bool(service.request(upload, Ms(1000), error)), "ReceiveBytes returns a framed reply");
+        stream.fail_send = mode == 3;
+        const uint8_t bytes[]{1,2,3,4};
+        const auto size = mode == 1 || mode == 4 ? 2 : 4;
+        if (mode != 5) {
+            const auto written = service.send_bytes(bytes, size, Ms(1000), error);
+            check(written == (mode != 3), "Raw upload write outcome is preserved");
+        }
+        if (mode == 0 || mode == 4) {
+            stream.reply(status("Complete"));
+            check(bool(service.receive(Ms(1000), error)), "Upload completion is received");
+        }
+        if (mode == 0) stream.reply(V::Dict());
+        const auto before = stream.sent;
+        adapter.reset();
+        check(stream.sent == before + (mode == 0 ? frame(command("Hangup")) : ""),
+            mode == 0 ? "Complete upload permits graceful Hangup" : "Incomplete or failed upload never receives plist Hangup bytes");
+    }
+}
+void failed_close() {
+    Stream stream; stream.packets.push_back({0,0,0,0});
+    auto adapter = ddi::detail::service_transport_with_byte_stream(stream, [] {}, {});
+    auto service = adapter->service(); std::string error;
+    check(!service.request(command("LookupImage"), Ms(1000), error), "Malformed reply fails the query");
+    const auto sent = stream.sent, saved_error = error;
+    adapter.reset();
+    check(stream.sent == sent && error == saved_error, "Failed framed operation closes without further I/O or changing its error");
+}
+void reconnect_close() {
+    Stream stream; stream.reply(V::Dict()); stream.reply(V::Dict());
+    auto adapter = ddi::detail::service_transport_with_byte_stream(stream, [] {}, {});
+    auto service = adapter->service(); std::string error;
+    const auto query = command("LookupImage");
+    check(bool(service.request(query, Ms(1000), error)), "Query succeeds before reconnect");
+    // This seam has no USB/RSD endpoint, so opening the replacement fails.
+    check(!service.reconnect(Ms(1000), error), "Missing replacement endpoint fails reconnect");
+    adapter.reset();
+    check(stream.sent == frame(query) + frame(command("Hangup")) && stream.packets.empty(),
+        "Reconnect finishes the old session once; failed replacement adds no Hangup");
+}
+void bounded_close(bool cancel, bool already_cancelled = false) {
+    Socket client, peer; check(pair(client, peer), "Create Hangup silent-peer connection"); if (!peer.valid()) return;
+    std::atomic<bool> cancelled{false};
+    auto adapter = ddi::detail::service_transport_with_socket(std::move(client), [&] { return cancelled.load(); });
+    std::string error; const auto reply = frame(V::Dict());
+    peer.write_all(reply.data(), reply.size(), error);
+    check(bool(adapter->service().request(command("LookupImage"), Ms(1000), error)), "Initial query succeeds before teardown");
+    std::vector<uint8_t> query; peer.read_len_prefixed_be(query, error);
+    std::thread trigger;
+    if (already_cancelled) cancelled = true;
+    else if (cancel) trigger = std::thread([&] { std::this_thread::sleep_for(Ms(40)); cancelled = true; });
+    const auto start = std::chrono::steady_clock::now();
+    adapter.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    if (trigger.joinable()) trigger.join();
+    check(elapsed < (cancel ? Ms(500) : Ms(1500)), "Silent Hangup peer cannot exceed cleanup deadline or cancellation budget");
+    if (already_cancelled) {
+        std::vector<uint8_t> extra;
+        check(!peer.read_len_prefixed_be(extra, error), "Already cancelled operation sends no Hangup");
+    }
+}
 void fragmentation() {
     Socket client, peer; check(pair(client, peer), "Create local byte-protocol connection");
     if (!peer.valid()) return;
@@ -83,16 +190,7 @@ void invalid_frame() {
         "Oversized peer length is rejected before allocation");
 }
 void tcp_fragments() {
-    class Stream final : public xdb::net::ByteStream {
-    public:
-        std::deque<std::vector<uint8_t>> packets;
-        bool send(std::string_view, std::string &) override { return true; }
-        bool recv(std::vector<uint8_t> &out, int, std::string &error, bool *timed_out) override {
-            if (timed_out) *timed_out = false;
-            if (packets.empty()) { error = "fake stream exhausted"; return false; }
-            out = std::move(packets.front()); packets.pop_front(); return true;
-        }
-    } stream;
+    Stream stream;
     auto first = V::Dict(); first.set("Status", V::Str("ReceiveBytesAck"));
     auto second = V::Dict(); second.set("Status", V::Str("Complete"));
     const auto body = frame(first) + frame(second);
@@ -107,5 +205,7 @@ void tcp_fragments() {
 }
 int main() {
     fragmentation(); bounded(false); bounded(true); invalid_frame(); tcp_fragments();
+    graceful_close(); upload_close(); failed_close(); reconnect_close();
+    bounded_close(false); bounded_close(true); bounded_close(true, true);
     return failures ? 1 : 0;
 }

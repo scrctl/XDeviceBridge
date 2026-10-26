@@ -15,6 +15,7 @@ using V = plist::Value;
 constexpr uint32_t kMaxFrame = static_cast<uint32_t>(plist::kMaxInput);
 constexpr char kUsbService[] = "com.apple.mobile.mobile_image_mounter";
 constexpr char kRemoteService[] = "com.apple.mobile.mobile_image_mounter.shim.remote";
+constexpr Ms kHangupTimeout{1000};
 
 Clock::time_point deadline(Ms timeout) {
     return Clock::now() + std::clamp(timeout, Ms(0), Ms(std::chrono::hours(1)));
@@ -25,6 +26,9 @@ Ms remaining(Clock::time_point until) {
 } // namespace
 
 struct ServiceTransport::Impl {
+    enum class Phase { Failed, Ready, Uploading, Finished };
+    Phase phase = Phase::Failed;
+    uint64_t upload_remaining = 0;
     transport::Lockdown *lockdown = nullptr;
     remote::Device *device = nullptr;
     uint32_t device_id = 0;
@@ -36,7 +40,46 @@ struct ServiceTransport::Impl {
     std::function<void()> test_interrupt;
     std::vector<uint8_t> pending;
     size_t offset = 0;
-    ~Impl() { socket.interrupt(); }
+    ~Impl() { hangup(kHangupTimeout); socket.interrupt(); }
+
+    // Closing TCP alone leaves some devices' image-mounter session busy for
+    // about 30 seconds. Send Hangup only at a completed plist boundary, never
+    // into a raw upload or after an interrupted/partially read operation.
+    void hangup(Ms timeout) noexcept {
+        if (phase != Phase::Ready) return;
+        phase = Phase::Finished;
+        try {
+            transport::IoBudget budget({std::min(timeout, kHangupTimeout), cancelled});
+            transport::BudgetWatchdog watch(budget, interrupter());
+            if (!watch.active()) return;
+            auto request = V::Dict(); request.set("Command", V::Str("Hangup"));
+            std::string ignored;
+            if (write_frame(request, ignored)) (void)read_frame(ignored);
+            // Best effort: a missing/rejected reply must not replace the
+            // result of the completed operation or escape this destructor.
+        } catch (...) {}
+    }
+
+    void accept_reply(Phase previous, const V &reply, const V *request = nullptr) {
+        if (previous == Phase::Failed || previous == Phase::Finished) return;
+        const auto *command = request ? request->find("Command") : nullptr;
+        const auto *status = reply.find("Status");
+        if (command && command->is_string() && command->string == "Hangup") {
+            phase = Phase::Finished;
+        } else if (previous == Phase::Uploading) {
+            if (!request && !upload_remaining && !reply.find("Error") && status &&
+                status->is_string() && status->string == "Complete") phase = Phase::Ready;
+        } else if (command && command->is_string() && command->string == "ReceiveBytes") {
+            const auto *size = request->find("ImageSize");
+            if (!reply.find("Error") && status && status->is_string() && status->string == "ReceiveBytesAck" &&
+                size && ((size->is_int() && size->integer > 0) || (size->is_uint() && size->unsigned_integer > 0))) {
+                upload_remaining = size->as_uint_or();
+                phase = Phase::Uploading;
+            }
+        } else if (!status || !status->is_string() || status->string != "ReceiveBytesAck") {
+            phase = Phase::Ready;
+        }
+    }
 
     std::function<void()> interrupter() {
         if (tcp) { auto *stream = tcp.get(); return [stream] { stream->close(); }; }
@@ -116,6 +159,8 @@ struct ServiceTransport::Impl {
     }
     bool connect(Ms timeout, std::string &error) {
         error.clear(); const auto until = deadline(timeout);
+        hangup(remaining(until));
+        phase = Phase::Failed; upload_remaining = 0;
         // No watchdog is running while replacing ownership.
         tcp.reset(); socket.interrupt(); tls = transport::TlsChannel{}; socket.close(); pending.clear(); offset = 0;
         if (lockdown) {
@@ -137,6 +182,7 @@ struct ServiceTransport::Impl {
                 const auto ok = watch.active() && tls.handshake(socket, lockdown->identity(), error);
                 if (!watch.finish(error, "DDI service operation") || !ok) return false;
             }
+            phase = Phase::Ready;
             return true;
         }
         if (!device || !device->stack()) { error = "DDI remote session is unavailable"; return false; }
@@ -167,7 +213,9 @@ struct ServiceTransport::Impl {
                 ok = false; break;
             }
         }
-        return watch.finish(error, "DDI service operation") && ok;
+        if (!watch.finish(error, "DDI service operation") || !ok) return false;
+        phase = Phase::Ready;
+        return true;
     }
 };
 
@@ -195,32 +243,42 @@ PlistService ServiceTransport::service() {
     PlistService service;
     service.request = [this](const V &request, Ms timeout, std::string &error) -> std::optional<V> {
         error.clear();
+        const auto previous = impl_->phase; impl_->phase = Impl::Phase::Failed;
         try {
             transport::IoBudget operation_budget({timeout, impl_->cancelled});
             transport::BudgetWatchdog watch(operation_budget, impl_->interrupter());
             auto result = watch.active() && impl_->write_frame(request, error) ? impl_->read_frame(error) : std::optional<V>{};
             if (!watch.finish(error, "DDI service operation")) return {};
+            if (result) impl_->accept_reply(previous, *result, &request);
             return result;
         } catch (const std::exception &e) { error = e.what(); return {}; }
     };
     service.receive = [this](Ms timeout, std::string &error) -> std::optional<V> {
         error.clear();
+        const auto previous = impl_->phase; impl_->phase = Impl::Phase::Failed;
         try {
             transport::IoBudget operation_budget({timeout, impl_->cancelled});
             transport::BudgetWatchdog watch(operation_budget, impl_->interrupter());
             auto result = watch.active() ? impl_->read_frame(error) : std::optional<V>{};
             if (!watch.finish(error, "DDI service operation")) return {};
+            if (result) impl_->accept_reply(previous, *result);
             return result;
         } catch (const std::exception &e) { error = e.what(); return {}; }
     };
     service.send_bytes = [this](const uint8_t *data, size_t size, Ms timeout, std::string &error) {
         error.clear();
+        const auto previous = impl_->phase; impl_->phase = Impl::Phase::Failed;
         try {
             if (!data && size) { error = "DDI service raw upload data is missing"; return false; }
             transport::IoBudget operation_budget({timeout, impl_->cancelled});
             transport::BudgetWatchdog watch(operation_budget, impl_->interrupter());
             const auto ok = watch.active() && impl_->write(data, size, error);
-            return watch.finish(error, "DDI service operation") && ok;
+            if (!watch.finish(error, "DDI service operation") || !ok) return false;
+            if (previous == Impl::Phase::Uploading && size <= impl_->upload_remaining) {
+                impl_->upload_remaining -= size;
+                impl_->phase = Impl::Phase::Uploading;
+            }
+            return true;
         } catch (const std::exception &e) { error = e.what(); return false; }
     };
     service.reconnect = [this](Ms timeout, std::string &error) {
@@ -233,12 +291,14 @@ std::unique_ptr<ServiceTransport> detail::service_transport_with_socket(
         transport::Socket socket, const std::function<bool()> &cancelled) {
     auto adapter = std::unique_ptr<ServiceTransport>(new ServiceTransport);
     adapter->impl_->socket = std::move(socket); adapter->impl_->cancelled = cancelled;
+    adapter->impl_->phase = ServiceTransport::Impl::Phase::Ready;
     return adapter;
 }
 std::unique_ptr<ServiceTransport> detail::service_transport_with_byte_stream(
         net::ByteStream &stream, const std::function<void()> &interrupt, const std::function<bool()> &cancelled) {
     auto adapter = std::unique_ptr<ServiceTransport>(new ServiceTransport);
     adapter->impl_->test_stream = &stream; adapter->impl_->test_interrupt = interrupt; adapter->impl_->cancelled = cancelled;
+    adapter->impl_->phase = ServiceTransport::Impl::Phase::Ready;
     return adapter;
 }
 } // namespace xdb::ddi

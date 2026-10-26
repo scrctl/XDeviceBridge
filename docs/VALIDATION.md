@@ -1,5 +1,30 @@
 # Validation
 
+## 2026-10-27: image-mounter session cleanup
+
+- iPhone14,4 / iOS 27.0.1, paired Wi-Fi, phone configured not to auto-lock.
+  Before the fix, repeated CLI DDI queries on both macOS and Windows ARM64 could
+  wait about 30 seconds in image-mounter responses. A standalone control probe
+  reproduced this without `Hangup`; adding it completed repeated full queries in
+  about 1.0–1.2 seconds on both hosts.
+- The rebuilt real macOS CLI passed successive explicit-IP status, automatic
+  status, explicit-IP status, existing-DDI prepare and automatic status requests:
+  1.142, 4.257, 1.242, 0.838 and 4.189 seconds. The rebuilt Windows ARM64 CLI
+  passed alternating explicit/automatic status requests in 1.398, 4.399, 1.280
+  and 4.481 seconds. Timings are measured inside each host, excluding VM command
+  output delivery. Automatic discovery retains its existing discovery budget.
+- Status consistently reported the Personalized mount and installed DDI Cryptex
+  `com.apple.MobileAsset.DDI` version `27.1.5228.8`. Prepare reused this mount;
+  this round did not remove or newly install a DDI. Windows used a private
+  temporary copy of a verified record, removed afterwards without replacing its
+  existing default credentials.
+- All 52 macOS offline/IPC tests passed. The image-mounter transport test also
+  built and passed natively on Windows ARM64, and now runs in Windows CI.
+  Cases cover exactly-once Hangup, reconnect, empty/rejected/malformed replies,
+  complete/partial/failed raw upload, missing upload completion, failed framing,
+  a silent peer, and cancellation before/during cleanup. These checks do not
+  establish real USB cleanup or compatibility with older image-mounter versions.
+
 ## 2026-10-24: candidate API boundary checks
 
 - Invalid screenshot format/type values now fail parameter validation rather than
