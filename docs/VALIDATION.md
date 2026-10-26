@@ -402,8 +402,16 @@ with MSYS2 CLANGARM64 (Clang 22.1.8). The iPhone was iPhone14,4 / iOS 27.0.1.
   A separate fresh session using native auto-discovery also started video and
   returned advancing frames with the same checked geometry and byte counts.
 
-USB was visible to Windows PnP but its Apple composite device reported Code 10;
-restarting that device did not clear the error. This run therefore provides no
-new USB acceptance result. No system firewall policy or existing pairing records
-were changed. Native Windows advertisement compatibility, long-term stability,
-and other Windows versions remain outside this result.
+The Apple USB composite device initially reported Code 10; restarting that device
+did not clear it. After the operator physically unplugged and reconnected the
+iPhone to the Windows VM, its USB device status became `OK`. The same build then
+passed USB enumeration, verification of the existing USB trust record, a
+1125×2436 PNG screenshot, and an explicitly USB C ABI session returning device
+information and three advancing decoded video frames (serials 1, 25, 50).
+Each BGRA response had the same checked geometry and 11196416-byte payload as
+the Wi-Fi tests. Video stopped and the session closed normally.
+
+The test-only server was stopped afterward. No system firewall policy or
+existing pairing records were changed. Native Windows advertisement
+compatibility, long-term stability, and other Windows versions remain outside
+this result.
