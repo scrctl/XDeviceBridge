@@ -65,12 +65,18 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'connectivity' in run('devices', '--help').stdout
     assert 'one-use code' in run('pair', '--help').stdout
     assert '--cache-dir' in run('ddi', 'prepare', '--help').stdout
+    ddi_help = run('ddi').stdout
+    assert ddi_help == run('ddi', '--help').stdout
+    assert all(command in ddi_help for command in ('prepare', 'status', 'unmount'))
+    for args in (('ddi', 'unknown'), ('ddi', 'status', 'extra')):
+        error = run(*args, ok=False).stderr
+        assert 'run xdb ddi --help' in error and 'screenshot' not in error
     assert 'not an iOS command shell' in run('rpc-shell', '--help').stdout
     assert 'Unknown command' in run('unknown', '--help', ok=False).stderr
     assert 'Unknown ddi command' in run('ddi', 'unknown', '--help', ok=False).stderr
     # Help must not read runtime configuration or contact/start a server.
     help_env = dict(os.environ, XDB_PORT='invalid', XDB_EXECUTABLE='/nonexistent/xdb')
-    for args in ((), ('--help',), ('server', '--help'), ('pair', '--help')):
+    for args in ((), ('--help',), ('ddi',), ('server', '--help'), ('pair', '--help')):
         result = subprocess.run([exe, *args], env=help_env, text=True, capture_output=True,
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr

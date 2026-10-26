@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
             else
                 args.push_back(a);
         }
-        if (show_help) {
+        if (show_help || (args.size() == 1 && args[0] == "ddi")) {
             xdb::cli::print_help(args);
             return 0;
         }
@@ -194,6 +194,13 @@ int main(int argc, char **argv) {
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
             args[0] != "rpc" && args[0] != "rpc-shell")
             throw std::invalid_argument("Unknown command; run xdb --help");
+        if (args[0] == "ddi") {
+            if (args.size() != 2 ||
+                (args[1] != "prepare" && args[1] != "status" && args[1] != "unmount"))
+                throw std::invalid_argument("Expected ddi prepare/status/unmount; run xdb ddi --help");
+            if (args[1] != "prepare" && (replace || !cache.empty()))
+                throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
+        }
         if (!dir.empty() && !xdb_client_start_server(port, dir.c_str())) {
             std::cerr << xdb_last_error() << '\n';
             return 1;
@@ -295,12 +302,8 @@ int main(int argc, char **argv) {
         }
         if (args[0] != "screenshot" && args[0] != "ddi")
             throw std::invalid_argument("Unknown command; run xdb --help");
-        if ((args[0] == "screenshot" && args.size() != 2) ||
-            (args[0] == "ddi" && (args.size() != 2 ||
-             (args[1] != "prepare" && args[1] != "status" && args[1] != "unmount"))))
-            throw std::invalid_argument("Expected screenshot FILE or ddi prepare/status/unmount");
-        if (args[0] == "ddi" && args[1] != "prepare" && (replace || !cache.empty()))
-            throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
+        if (args[0] == "screenshot" && args.size() != 2)
+            throw std::invalid_argument("Expected screenshot FILE");
         if (serial.empty()) {
             Json options = {{"transport", usb ? "usb" : wifi ? "wifi" : "auto"}};
             if (timeout >= 0)
