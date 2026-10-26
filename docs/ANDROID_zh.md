@@ -80,3 +80,27 @@ HEVC 需要 avcodec/avutil/swscale，音频解码还需 swresample。
 目前尚无在线 Android 设备完成应用沙箱、后台生命周期、权限和 iPhone 端到端验收。
 MaaFramework 已有的 Android Native 接入支持加载应用提供的原生库，
 可作为生命周期组织的参考；这里不复用或修改其 `GetLockedPixels`／`DispatchInputMessage` ABI。
+
+## Android NSD 发现（API 34+）
+
+宿主应用编译 `android/src/main/java/org/xdevicebridge/NsdDiscovery.java`，并在 R8
+配置中包含 `android/consumer-rules.pro`。加载 `libxdb_server` 后，在启动内嵌服务前调用
+`NsdDiscovery.acquire(applicationContext)`；客户端和 Server 工作线程停止后关闭返回的
+租约。同一应用的多个 Server 共用一个订阅，最后一个租约关闭时停止订阅并清空快照，
+仅持有 Application Context。纯客户端 SDK 不增加 Java 或 Android 权限依赖。
+
+只订阅 Wi-Fi／以太网上的 `_remotepairing._tcp.`。Android 14／API 34 起使用
+service-info 回调更新 TXT 原始字节、端口和所有主机地址，移除已消失的服务；网络消失时
+清除该网络条目，用本机接口元数据为 IPv6 链路本地地址补上作用域。已有快照立即返回，
+首次发现或空缓存最多等待调用方指定的期限。适配层没有定时扫描／刷新任务，由系统维护
+订阅。发现结果不是配对或连接成功的证明。`NsdDiscovery.status()` 可查看广播快照和
+可用状态，不含配对凭据。
+
+API 24–33、未加载适配层、权限不足或 NSD 回调失败时保留直接组播后端。宿主仍应保留
+现有 MulticastLock 策略，供回退和配对广播使用。后台和网络生命周期仍由 App 管理；
+xdb 不启动前台 Service，不持久化发现缓存。
+
+配对广播继续使用 xdb 的直接后端：Android 公开 API 无法将 SRV 主机名设为配对会话
+标识，单凭系统注册成功不足以证明 iPhone 配对兼容。服务类型和配对身份保持不变。
+
+参见 [Android service-info 订阅接口](https://developer.android.com/reference/android/net/nsd/NsdManager#registerServiceInfoCallback(android.net.nsd.NsdServiceInfo,%20java.util.concurrent.Executor,%20android.net.nsd.NsdManager.ServiceInfoCallback))。

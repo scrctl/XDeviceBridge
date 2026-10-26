@@ -1,6 +1,8 @@
 #include "wifi/Mdns.h"
 #include "wifi/DnsSd.h"
-#ifdef __APPLE__
+#ifdef __ANDROID__
+#include "wifi/AndroidNsd.h"
+#elif defined(__APPLE__)
 #include "wifi/Bonjour.h"
 #elif defined(XDB_HAVE_AVAHI)
 #include "wifi/Avahi.h"
@@ -582,9 +584,11 @@ BrowseResult browse(const BrowseOptions &options) {
         return result;
     }
     auto scan_timeout = options.timeout;
-#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI) || defined(_WIN32)
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(XDB_HAVE_AVAHI) || defined(_WIN32)
     const auto native_start = detail::RecordCache::Clock::now();
-#ifdef __APPLE__
+#ifdef __ANDROID__
+    auto native = detail::android_browse(options);
+#elif defined(__APPLE__)
     auto native = detail::bonjour_browse(options);
 #elif defined(XDB_HAVE_AVAHI)
     auto native = detail::avahi_browse(options);

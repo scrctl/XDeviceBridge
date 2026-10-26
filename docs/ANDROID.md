@@ -84,3 +84,34 @@ online Android device for app-sandbox, background lifecycle, permission or iPhon
 end-to-end acceptance. Existing MaaFramework Android Native integration supports
 loading an application-supplied native library, which is a useful lifecycle precedent;
 its `GetLockedPixels`/`DispatchInputMessage` ABI is not reused or modified here.
+
+## Android NSD discovery (API 34+)
+
+Compile `android/src/main/java/org/xdevicebridge/NsdDiscovery.java` into the host
+application and include `android/consumer-rules.pro` in its R8 rules. After loading
+`libxdb_server`, acquire `NsdDiscovery.acquire(applicationContext)` before starting
+an embedded server. Close that lease after stopping its workers/clients. Multiple
+servers in one application share one subscription; closing the last lease stops
+it and clears the snapshot. The adapter retains the application Context only.
+No Java runtime or Android permission is introduced into the client-only SDK.
+
+Only `_remotepairing._tcp.` is browsed, on Wi-Fi/Ethernet networks. Android 14/API
+34+ service-info callbacks update TXT bytes, port and all host addresses, and
+remove lost services. Network loss removes its entries; interface metadata scopes
+link-local IPv6 addresses. Warm discovery snapshots return immediately; a cold or
+empty cache may wait up to the requested discovery timeout. The adapter has no
+periodic scan/refresh timer; Android owns the subscription. Discovery is advisory,
+not proof of pairing or connectivity. `NsdDiscovery.status()` exposes the current
+advertisements and availability for diagnostics, never pairing credentials.
+
+API 24–33, a missing adapter, missing permissions or failed NSD callbacks retain
+the direct multicast backend. Keep the host's existing MulticastLock policy for
+that fallback and pairing advertisements. App background/network lifecycle still
+belongs to the host; xdb does not start a foreground Service or persist the cache.
+
+Pairing advertisements continue to use xdb's direct backend. Public Android APIs
+cannot set the SRV hostname to the session identifier required by this pairing
+implementation; native registration success alone would not establish iPhone
+compatibility. The service type and pairing identity are unchanged.
+
+See [Android service-info subscriptions](https://developer.android.com/reference/android/net/nsd/NsdManager#registerServiceInfoCallback(android.net.nsd.NsdServiceInfo,%20java.util.concurrent.Executor,%20android.net.nsd.NsdManager.ServiceInfoCallback)).
