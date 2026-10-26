@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Finish idle image-mounter sessions with a bounded, cancellable `Hangup` before
+  closing or reconnecting. This prevents repeated Wi-Fi DDI queries from waiting
+  about 30 seconds on affected devices; incomplete uploads and failed transports
+  close directly without sending plist commands into raw image data.
 - Add `xdb ddi status` and `xdb ddi remove`, with USB/Wi-Fi selection and JSON
   output. Query mount and Cryptex installation state independently; reverse device
   preparation by uninstalling the reported DDI Cryptex or unmounting the image.

@@ -18,6 +18,8 @@ std::unique_ptr<ServiceTransport> service_transport_with_byte_stream(
 // Owns only the independent image-mounter connection. Borrowed Lockdown/Device
 // and this adapter must outlive callbacks returned by service(). Operations are
 // serialized by the caller; every operation uses one remaining deadline.
+// Destruction/reconnect best-effort Hangup at an idle plist boundary (<= 1 s,
+// cancellable); failed operations and incomplete raw uploads close directly.
 class ServiceTransport {
 public:
     ~ServiceTransport();

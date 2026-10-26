@@ -149,6 +149,11 @@ uses USB, `wifi:"auto"` uses paired Wi-Fi discovery. A reported OS category is n
 the installed image's identity. Errors or cancellation can follow a device-side
 change; query status before retrying an uncertain removal.
 
+Idle image-mounter connections send a best-effort `Hangup` before teardown or
+reconnect. Cleanup waits at most one second, honors cancellation and does not
+replace the completed operation's result. Failed transports and incomplete raw
+uploads close directly without an additional protocol command.
+
 Touch coordinates refer to the device's panel axes, not a rotated/cropped client
 window. BGRA frame dimensions can include codec padding. `display` metadata comes
 from the device display subscription and contains width, height, orientation and
