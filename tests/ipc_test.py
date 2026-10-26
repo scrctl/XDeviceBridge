@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
         assert result.returncode==0, result.stderr
         assert json.loads(result.stdout)['ok']
         result=subprocess.run([str(exe.resolve()),'--port',str(port),'devices','--wifi','--timeout','0'],text=True,capture_output=True,timeout=5)
-        assert result.returncode==0 and result.stdout.startswith('List of iOS devices attached'), result.stderr
+        assert result.returncode==0 and result.stdout.splitlines()[0]=='List of iOS devices', (result.stdout, result.stderr)
         # A full pool of sessionless peers (including a partial frame) cannot
         # prevent a new management request from reaching the daemon.
         pool = []
