@@ -69,6 +69,11 @@ Linux 构建时若有 Avahi 开发头文件（Debian/Ubuntu 的 `libavahi-client
 库、后台服务或系统总线不可用时回退到直接 mDNS。仅构建客户端无需 Avahi，
 xdb 不修改系统 mDNS 配置，也不要求 root 权限。
 
+Windows 的设备发现使用 `dnsapi.dll` 提供的系统 DNS-SD 接口。接口在运行时加载；
+接口不可用或原生启动失败时回退到直接 mDNS。配对广播继续使用直接 mDNS，确保
+UUID 主机名和所有地址记录一并发布，无需安装 Bonjour。
+与 macOS/Linux 后端一样，发现仍是有期限的一次快照，尚未维护持久设备列表或验证连接。
+
 重新构建服务端后，若旧后台仍在运行，请先执行 `./build/xdb kill-server` 和
 `./build/xdb start-server` 再测试。替换磁盘上的程序不会更新现有后台进程的代码。
 

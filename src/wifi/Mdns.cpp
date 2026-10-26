@@ -4,6 +4,8 @@
 #include "wifi/Bonjour.h"
 #elif defined(XDB_HAVE_AVAHI)
 #include "wifi/Avahi.h"
+#elif defined(_WIN32)
+#include "wifi/WindowsDnsSd.h"
 #endif
 
 #include "transport/SocketPlatform.h"
@@ -580,12 +582,14 @@ BrowseResult browse(const BrowseOptions &options) {
         return result;
     }
     auto scan_timeout = options.timeout;
-#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI)
+#if defined(__APPLE__) || defined(XDB_HAVE_AVAHI) || defined(_WIN32)
     const auto native_start = detail::RecordCache::Clock::now();
 #ifdef __APPLE__
     auto native = detail::bonjour_browse(options);
-#else
+#elif defined(XDB_HAVE_AVAHI)
     auto native = detail::avahi_browse(options);
+#else
+    auto native = detail::windows_browse(options);
 #endif
     if (native.available || native.cancelled) return native;
     scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - native_start);
@@ -892,6 +896,16 @@ std::vector<detail::HostReply> detail::host_query_reply(const HostRecords &recor
         if (multicast) replies.push_back({std::move(packet), false});
     }
     return replies;
+}
+
+std::vector<detail::NativeInterface> detail::native_interfaces(std::vector<std::string> &warnings) {
+    std::vector<NativeInterface> result;
+    for (const auto &iface : interfaces(warnings)) {
+        if (std::none_of(result.begin(), result.end(), [&](const auto &item) {
+                return item.index == iface.cache_index;
+            })) result.push_back({iface.cache_index, iface.ipv6_index, iface.name});
+    }
+    return result;
 }
 
 std::vector<std::pair<uint32_t, detail::HostRecords>> detail::local_host_records(

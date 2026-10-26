@@ -8,6 +8,9 @@
 - Add an optional Linux Avahi backend with runtime library loading and direct
   mDNS fallback. Preserve pairing records and avoid adding Avahi dependencies to
   lightweight clients.
+- Use optional Windows system DNS-SD for device discovery, preserving
+  interface-scoped addresses and asynchronous cancellation with direct mDNS as a
+  startup fallback. Keep direct mDNS for complete pairing-host advertisements.
 
 ## 1.0.1 — 2026-10-26
 
