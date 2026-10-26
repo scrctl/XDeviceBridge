@@ -474,3 +474,51 @@ The test servers were stopped. The device was left with the DDI installed and
 mounted. The older default server on port 17423 was not replaced; it still points
 to the desktop's previously installed runtime. These results validate the stated
 build/device/USB/Wi-Fi paths, not a portable Windows package or other iOS models.
+
+## Linux DDI lifecycle acceptance (2026-10-26)
+
+Built `ca17de7` in `/home/YJBeetle/Workspace/XDeviceBridge/build` on Debian 13
+ARM64 (kernel 6.12.113+deb13-arm64), using GCC 14 and CMake 3.31.6. All 51 CTest
+cases passed. Avahi 0.8 and usbmuxd 1.1.1 were active; the iPhone was passed
+through to the Parallels VM by USB. Test servers used separate loopback ports
+and the user's existing Wi-Fi pairing record. No new pairing was performed.
+
+The device was iPhone14,4 / iOS 27.0.1, initially with
+`com.apple.MobileAsset.DDI 27.1.5228.8` installed and its image mounted.
+
+USB acceptance:
+
+1. Status identified the installed Cryptex and mounted Personalized image.
+2. Removal completed in 1.63 seconds with `changed:true`; an independent status
+   query confirmed `mounted:false` and `cryptex_installed:false`.
+3. Repeated removal completed in 0.89 seconds with `changed:false`.
+4. Preparation downloaded and verified the five pinned assets into
+   `build/validation/ddi-cache`, requested a ticket, uploaded the assets and
+   verified installation. Its 159.61 seconds include downloading and waiting for
+   the phone to be unlocked, so this is not a throughput baseline.
+5. A separate status query confirmed installation and mount state; a new visible
+   screenshot was 1125 x 2436 (1386119 bytes).
+
+Wi-Fi acceptance through paired automatic discovery:
+
+1. Initial status identified the installed/mounted DDI in 4.46 seconds.
+2. Removal reported `changed:true`; a separate status query confirmed absence.
+3. Repeated removal reported `changed:false`.
+4. Preparation reused the Linux cache, requested a ticket and uploaded the assets
+   over Wi-Fi. It completed in 39.01 seconds and restored installation and mount
+   state, confirmed by a separate query.
+5. The first screenshot was a valid PNG with a black image. After the operator
+   unlocked the phone again, a fresh Wi-Fi screenshot showed the home screen:
+   1125 x 2436, 3926098 bytes, captured in 4.40 seconds. The black image alone was
+   not counted as visible screenshot acceptance.
+
+Linux reproduced the automatic Wi-Fi latency observed on Windows: removal,
+post-removal status, repeated removal and restored status took 31.82, 31.58,
+32.14 and 31.69 seconds respectively. On the restored image, a later explicit
+IPv4 status query took 1.24 seconds and returned the same installed/mounted
+state. The delayed automatic-connection stage remains unidentified.
+
+Both test-only servers were stopped; the existing default server was retained.
+The device was left with its DDI installed and mounted. These results cover this
+Debian ARM64 VM, existing trust records and the stated device, not other Linux
+distributions or iOS models.
