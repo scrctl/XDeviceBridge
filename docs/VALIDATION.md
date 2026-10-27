@@ -1,5 +1,31 @@
 # Validation
 
+## 2026-10-27: released 1.0 / 1.1 client-server compatibility
+
+- macOS ARM64, using the real client and server libraries from the official
+  `v1.0.0` and `v1.1.0` notarized release archives. The older archive's SHA256
+  was checked against its published GitHub asset digest
+  `5b14a08be3cde63dd118e818f9aca1614ee68f92e3b638f8758706100ce14678`;
+  the 1.1.0 archive retained its independently verified release hash
+  `a63142541ed0065250aa9ab7efc6a826c548c1f6c419a038e1465e4411f45b9c`.
+- All four combinations passed: client/server 1.0.0/1.0.0, 1.0.0/1.1.0,
+  1.1.0/1.0.0 and 1.1.0/1.1.0. Each version ran in its own process to avoid
+  shared-library loader aliasing, with a free loopback port and temporary empty
+  data directory. Existing servers and pairing records were not changed.
+- Verified the published C API's version queries, protocol-1 handshake,
+  `server.info`, ignoring an extra optional request field, `connection.close`,
+  and `unknown_method` for an unsupported input method. Subsequent requests
+  succeeded after each rejected operation.
+- The old server has no `ddi.status` endpoint: it returns `not_connected` /
+  `Open a device session first`, even though opening a session would not add the
+  method. The 1.1 server instead recognizes the method and rejects missing UDID
+  as `invalid_params`. This diagnostic limitation in the published 1.0 server
+  remains; clients must handle operation failures and upgrade the server for
+  new methods, rather than infer support from a successful handshake.
+- No device session, pairing, DDI operation or media capture was performed.
+  This acceptance covers the macOS binary/API boundary and these requests;
+  it does not establish cross-version live-media or Windows/Linux acceptance.
+
 ## 2026-10-27: image-mounter session cleanup
 
 - iPhone14,4 / iOS 27.0.1, paired Wi-Fi, phone configured not to auto-lock.
