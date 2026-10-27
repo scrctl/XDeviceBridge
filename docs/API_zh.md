@@ -1,8 +1,8 @@
-# XDB API 参考——1.0
+# XDB API 参考——1.1
 
 [English](API.md) | 简体中文
 
-本文定义 XDB 1.0 的公开 RPC 接口约定，已对照 `xdb.h`、`Client.cpp`、`Server.cpp`、
+本文定义 XDB 1.1 的公开 RPC 接口约定，已对照 `xdb.h`、`Client.cpp`、`Server.cpp`、
 `Backend.cpp` 和 `Discovery.h`。已发布版本遵守协议 1 的兼容性策略。
 另见[通信分帧与兼容性](PROTOCOL_zh.md)、[安装](INSTALL_zh.md)、
 [设备验收证据](VALIDATION.md)和 [C SDK 参考](C_API_zh.md)。

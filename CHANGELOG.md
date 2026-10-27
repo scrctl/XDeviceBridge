@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 — 2026-10-27
+
 - Keep desktop native discovery subscriptions for the Server lifetime. Warm
   device listings and automatic Wi-Fi connection discovery reuse an updated
   snapshot instead of waiting a fresh scan window. Follow native removals, reclaim
@@ -23,6 +25,18 @@
 - Use optional Windows system DNS-SD for device discovery, preserving
   interface-scoped addresses and asynchronous cancellation with direct mDNS as a
   startup fallback. Keep direct mDNS for complete pairing-host advertisements.
+- Add an Android API 34+ `NsdManager` adapter for App-owned discovery subscriptions,
+  resolved service updates and loss notifications. Multiple embedded runtimes can
+  share a subscription through lifecycle leases; older Android versions retain
+  direct mDNS discovery. The host App still owns permissions and lifecycle.
+- Synchronize the English and Chinese DDI RPC references and check both languages
+  for complete method coverage.
+
+C ABI 1, local RPC protocol 1 and existing pairing records remain compatible.
+Restart an already running Server to use the new discovery and DDI behavior;
+updating only a client library does not upgrade the Server. Older servers do not
+provide the new `ddi.status` and `ddi.remove` methods. See the
+[validation record](docs/VALIDATION.md) for tested devices and remaining boundaries.
 
 ## 1.0.1 — 2026-10-26
 

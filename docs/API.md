@@ -1,8 +1,8 @@
-# XDB API reference — 1.0
+# XDB API reference — 1.1
 
 English | [简体中文](API_zh.md)
 
-This document defines the public RPC contract for XDB 1.0, checked against `xdb.h`,
+This document defines the public RPC contract for XDB 1.1, checked against `xdb.h`,
 `Client.cpp`, `Server.cpp`, `Backend.cpp` and `Discovery.h`. Published releases
 follow the protocol 1 compatibility policy.
 [Wire framing and compatibility](PROTOCOL.md), [installation](INSTALL.md),

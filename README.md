@@ -11,6 +11,11 @@ stable integration baseline. scrctl and MaaFramework use the lightweight client;
 device services run in xdb Server. Device and OS support remains service-dependent;
 see the [validation boundaries](docs/VALIDATION.md) and [changelog](CHANGELOG.md).
 
+Version 1.1 adds native system discovery with shared subscriptions on desktop,
+an Android NSD adapter, and DDI status/removal commands. C ABI 1 and protocol 1
+remain unchanged. Restart an existing Server after upgrading to activate these
+changes; existing pairing records are retained.
+
 ## Architecture
 
 ```text
