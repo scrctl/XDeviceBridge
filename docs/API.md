@@ -80,8 +80,8 @@ not a transaction mechanism for multiple control clients.
 | unknown_method | Dispatch reached an unimplemented method. Negotiate/use a supported method. |
 
 Error precedence follows dispatch: e.g. an unknown device method without a session
-can return `not_connected` before `unknown_method`. Unknown `input.*` methods may
-reach HID service initialization first. Do not use unknown calls as a no-side-effect
+can return `not_connected` before `unknown_method`. Unknown `input.*` methods are
+rejected before HID service initialization. Do not use unknown calls as a no-side-effect
 capability probe. Discovery exposes video decoding availability explicitly.
 Malformed framing, oversized messages and invalid request envelopes close the
 socket without guaranteeing an RPC error. Successful RPC error receipt does not

@@ -11,13 +11,15 @@ class ReferenceCoverage(unittest.TestCase):
                             ('src/server/Backend.cpp', 'src/server/Server.cpp'))
         methods = set(re.findall(r'(?:method|request\["method"\])\s*==\s*"([a-z_.]+)"', sources))
         methods.add('hello')
-        doc = (ROOT / 'docs/API.md').read_text(encoding="utf-8")
-        headings = set()
-        for line in doc.splitlines():
-            if line.startswith('### '):
-                headings.update(re.findall(r'`([a-z_.]+)`', line))
-        self.assertEqual(methods, headings)
-        self.assertNotIn('pairing.import', headings)
+        for language in ('', '_zh'):
+            with self.subTest(language=language or 'en'):
+                doc = (ROOT / f'docs/API{language}.md').read_text(encoding="utf-8")
+                headings = set()
+                for line in doc.splitlines():
+                    if line.startswith('### '):
+                        headings.update(re.findall(r'`([a-z_.]+)`', line))
+                self.assertEqual(methods, headings)
+                self.assertNotIn('pairing.import', headings)
 
     def test_exported_c_symbols_documented(self):
         header = (ROOT / 'include/xdb/xdb.h').read_text(encoding="utf-8")

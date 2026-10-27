@@ -39,7 +39,7 @@
 
 | 状态 | 可调用的方法 |
 | --- | --- |
-| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、pair、ddi.download、ddi.prepare、connection.open、connection.attach、connection.close |
+| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、pair、ddi.download、ddi.prepare、ddi.status、ddi.remove、connection.open、connection.attach、connection.close |
 | 已拥有或附着设备会话 | 上述方法及 device/display/input/app/clipboard/media 方法；同一连接再次 open/attach 会失败 |
 | 已通过 connection.close 脱离 | 可再次调用管理方法；open/attach 可建立新的关联 |
 | 已中断、传输失败或已销毁 | 丢弃客户端，使用新句柄重新连接 |
@@ -74,7 +74,7 @@
 | unknown_method | 分发到未实现的方法。协商或使用受支持的方法。 |
 
 错误优先级取决于分发顺序。例如，无设备会话时调用未知设备方法，可能先返回
-`not_connected`，而不是 `unknown_method`；未知 `input.*` 方法还可能先初始化 HID 服务。
+`not_connected`，而不是 `unknown_method`；未知 `input.*` 方法在初始化 HID 服务前拒绝。
 不要用未知调用做无副作用的能力探测；发现接口会显式报告视频解码能力。
 
 错误分帧、超大消息和无效请求封装会关闭套接字，不保证返回 RPC 错误。
@@ -160,7 +160,7 @@ USB 地址／接口可为空，端口可为零；Wi-Fi IPv6 地址可能包含�
 | 参数 | 类型／默认值 |
 | --- | --- |
 | udid | 非空字符串，**必填** |
-| wifi | 字符串；默认空，先 USB 后已配对 Wi-Fi；auto 为 Wi-Fi 发现；显式地址为 Wi-Fi 端点 |
+| wifi | 字符串；默认空，使用 USB；auto 为已配对 Wi-Fi 发现；显式地址为 Wi-Fi 端点 |
 | port | 整数 1..65535；默认 49152，用于显式 Wi-Fi 地址 |
 | cache_directory | 字符串；默认空，使用内置缓存选择 |
 | replace | 布尔值；默认 false |
@@ -172,6 +172,56 @@ USB 地址／接口可为空，端口可为零；Wi-Fi IPv6 地址可能包含�
 复用合适的已挂载 DDI；否则可能下载、向 Apple 请求个性化签票并安装。
 显式替换会改变手机已挂载的开发者镜像。取消／超时不等于事务回滚。
 镜像准备成功与视频、音频、输入服务可用是不同结论；详见 DDI 和设备验收说明。
+
+### `ddi.status`
+
+| 参数 | 类型／默认值 |
+| --- | --- |
+| udid | 非空字符串，**必填** |
+| wifi | 字符串；默认空，使用 USB；auto 为已配对 Wi-Fi 发现；显式地址为 Wi-Fi 端点 |
+| port | 整数 1..65535；默认 49152，用于显式 Wi-Fi 地址 |
+
+不需要设备会话，但需要独占设备租约，因此须先关闭已有会话。
+连接后查询镜像挂载服务；若设备公布了 cryptexd 服务，还会独立查询已安装的 DDI Cryptex。
+不下载、签票、安装、移除，也不与下载目录中的镜像比较。返回：
+`{udid:string,os_version:string,kind:string,image_type:string,mounted:bool,
+verification:string,cryptex_installed:bool|null,cryptex_identifier:string,
+cryptex_version:string}`。
+
+`kind` 是按系统版本选择的下载类别（`classic`、`personalized`、`cryptex`），
+不是已挂载镜像的构建号或身份。`image_type` 是查询的服务镜像类型：
+`Developer` 或 `Personalized`；Cryptex 的镜像也表现为 `Personalized`。
+挂载时 `verification` 为 `LookupImage signature` 或 `CopyDevices entry`，否则为空字符串。
+这表示挂载证据，不保证它与某份下载镜像兼容。
+
+`cryptex_installed` 通过 cryptexd 独立查询；DDI 可以已安装但尚未挂载。
+安装时返回标识与版本，否则相应字符串为空。未公布服务时该字段为 null，
+不能视作已查询且未安装；Cryptex 类别的系统若无法进行该查询，则返回失败。
+现代系统的 USB 连接也会建立 RSD，以查询实际安装情况，不仅依赖下载类别判断。
+建连阶段和共享的查询／移除阶段各有 30 秒预算，并支持取消。
+无法验证的回复或查询失败返回 `operation_failed`，不会伪造“未安装”；
+设备被占用时返回 `device_busy`。
+
+### `ddi.remove`
+
+参数与独占租约要求同 `ddi.status`。执行设备准备的反向操作，保留配对记录和宿主缓存：
+
+- 若 cryptexd 报告已安装 `com.apple.MobileAsset.DDI`，按查询到的实际版本卸载，
+  并验证 DDI 安装已不存在。不移除其他 Cryptex，也不从下载目录猜测版本。
+- 否则通过镜像挂载服务卸载 Classic／Personalized 镜像（`/Developer` 或
+  `/System/Developer`），并验证挂载已不存在。支持 Cryptex 的系统上，
+  若使用的仍是镜像挂载服务 DDI，也走此路径。
+
+已经不存在的 DDI 会成功返回，不再执行移除修改。移除后验证无挂载，并在服务可用时
+复查 Cryptex 安装。卸载 Cryptex 后若仍有挂载，则返回错误，不会再尝试第二种移除机制。
+返回上述状态字段，其中 `mounted:false`、未报告已安装的 Cryptex，
+verification／identifier／version 为空，另含 `changed:bool`。
+`changed:true` 表示本次请求执行了移除并验证结果。
+
+不会更新个性化 nonce、下载资源或卸载应用。再次准备设备请调用 `ddi.prepare`。
+这会撤销 DDI 准备的结果，不会恢复此前被 `prepare --replace` 替换掉的旧镜像。
+取消或回复丢失可能发生在设备已修改之后；重试前先查 `ddi.status`。
+不自动重试，也不自动回滚。
 
 ## 连接与显示
 
