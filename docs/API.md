@@ -570,17 +570,20 @@ audio.read from another; schedule both outside sound callbacks. A container flow
 {"id":9,"method":"connection.close","params":{}}
 ```
 
-## Items to resolve before calling this a frozen 1.0 contract
+## Compatibility and validation
 
-- Review the remaining supported method/parameter/error domains against the
-  implementation, keeping realistic deadlines separate from per-stage budgets.
-  Screenshot enum validation, initial recording orientation and bounded/cancellable
-  input.text delivery are implemented; their new behavior still needs review as
-  part of the candidate baseline.
-- Run an old-client/new-server compatibility fixture against a fixed released
-  baseline, rather than only same-source IPC regression. Package and ABI versions
-  are distinct; no device feature is promised merely by a successful hello.
-- Finish review of C symbol stability, media/session lifetime and concrete
-  platform/device acceptance; evidence remains separately scoped in VALIDATION.md.
+XDB 1.0 established C ABI 1 and wire protocol 1. Package versions are separate
+from these contracts; see the [version and upgrade policy](PROTOCOL.md).
+
+- All four released 1.0.0/1.1.0 client/server combinations passed the selected
+  C API and RPC checks on macOS ARM64. This does not establish cross-version
+  live-media or Windows/Linux acceptance; see the [validation records](VALIDATION.md).
+- A successful hello confirms protocol compatibility, not device capabilities
+  or the availability of new methods. Clients must handle operation failures
+  and upgrade older servers when new methods are required.
+- Device, media, cancellation and deadline validation remains limited to the
+  platforms, devices and operations documented in the validation records.
+
+## Recording output paths
 
 Recording outputs (`recording.configure.path` and `video.start.record_path`) must be new absolute local files. Existing files and symlinks are refused atomically; remove or rename an old recording explicitly before reusing its path. Failed recordings may leave a partial new file.
