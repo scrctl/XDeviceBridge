@@ -1,5 +1,6 @@
 #include "wifi/Mdns.h"
 #include "wifi/DnsSd.h"
+#include "wifi/DiscoverySubscription.h"
 #ifdef __ANDROID__
 #include "wifi/AndroidNsd.h"
 #elif defined(__APPLE__)
@@ -97,14 +98,18 @@ struct InterfaceRecords {
     std::map<std::string, std::vector<Timed<std::string>>> hosts;
 };
 
+auto expiry(uint32_t ttl, detail::RecordCache::Clock::time_point now, bool daemon_managed) {
+    return ttl && daemon_managed ? detail::RecordCache::Clock::time_point::max() : now + std::chrono::seconds(ttl);
+}
+
 template <typename T>
 bool update(std::vector<Timed<T>> &records, const T &value, uint32_t ttl,
-            detail::RecordCache::Clock::time_point now, size_t limit) {
+            detail::RecordCache::Clock::time_point now, size_t limit, bool daemon_managed) {
     std::erase_if(records, [&](const Timed<T> &record) {
         return record.expires <= now || (ttl == 0 && record.value == value);
     });
     if (!ttl) return true;
-    const auto expires = now + std::chrono::seconds(ttl);
+    const auto expires = expiry(ttl, now, daemon_managed);
     for (auto &record : records) {
         if (record.value == value) {
             record.expires = expires;
@@ -124,6 +129,7 @@ void warn(std::vector<std::string> &warnings, std::string message) {
 } // namespace
 
 struct detail::RecordCache::Impl {
+    bool daemon_managed = false;
     std::map<uint32_t, InterfaceRecords> interfaces;
     std::vector<std::string> warnings;
     size_t service_count = 0;
@@ -162,7 +168,7 @@ struct detail::RecordCache::Impl {
         if (type == MDNS_RECORDTYPE_PTR && key == kService) {
             const auto instance = extract_name(data, size, offset);
             if (instance.empty()) { ctx.valid = false; return 0; }
-            if (auto *entry = service(instance)) entry->ptr_expires = ctx.now + std::chrono::seconds(ttl);
+            if (auto *entry = service(instance)) entry->ptr_expires = expiry(ttl, ctx.now, ctx.cache.daemon_managed);
         } else if (type == MDNS_RECORDTYPE_SRV) {
             if (auto *entry = service(name)) {
                 std::array<char, 256> buffer{};
@@ -170,7 +176,7 @@ struct detail::RecordCache::Impl {
                 const auto target = length >= 8 ? extract_name(data, size, offset + 6) : std::string{};
                 if (target.empty()) { ctx.valid = false; return 0; }
                 if (srv.port) {
-                    if (!update(entry->srv, Service::Srv{target, srv.port}, ttl, ctx.now, kMaxSrv))
+                    if (!update(entry->srv, Service::Srv{target, srv.port}, ttl, ctx.now, kMaxSrv, ctx.cache.daemon_managed))
                         warn(ctx.cache.warnings, "mDNS SRV candidate limit reached");
                 }
             }
@@ -186,8 +192,12 @@ struct detail::RecordCache::Impl {
                     txt.try_emplace(field_key, fields[i].value.str ?
                                    std::string(fields[i].value.str, fields[i].value.length) : std::string{});
                 }
-                entry->txt = std::move(txt);
-                entry->txt_expires = ctx.now + std::chrono::seconds(ttl);
+                // Native TXT replacement can add the new value before removing
+                // the old one. A late removal must not withdraw its replacement.
+                if (ttl || entry->txt == txt) {
+                    entry->txt = std::move(txt);
+                    entry->txt_expires = expiry(ttl, ctx.now, ctx.cache.daemon_managed);
+                }
             }
         } else if (type == MDNS_RECORDTYPE_A || type == MDNS_RECORDTYPE_AAAA) {
             std::string address;
@@ -217,7 +227,7 @@ struct detail::RecordCache::Impl {
                     return 0;
                 }
                 if (!ctx.iface.hosts.contains(key)) ++ctx.cache.host_count;
-                if (!update(ctx.iface.hosts[key], address, ttl, ctx.now, kMaxAddresses))
+                if (!update(ctx.iface.hosts[key], address, ttl, ctx.now, kMaxAddresses, ctx.cache.daemon_managed))
                     warn(ctx.cache.warnings, "mDNS address candidate limit reached");
             }
         }
@@ -225,7 +235,7 @@ struct detail::RecordCache::Impl {
     }
 };
 
-detail::RecordCache::RecordCache() : impl_(std::make_unique<Impl>()) {}
+detail::RecordCache::RecordCache(bool daemon_managed) : impl_(std::make_unique<Impl>()) { impl_->daemon_managed = daemon_managed; }
 detail::RecordCache::~RecordCache() = default;
 
 bool detail::RecordCache::add_packet(uint32_t index, std::string_view interface_name,
@@ -342,13 +352,13 @@ std::vector<Advertisement> detail::RecordCache::snapshot(Clock::time_point now) 
     return result;
 }
 
-std::vector<std::pair<uint16_t, std::string>> detail::RecordCache::queries(uint32_t index, Clock::time_point now) const {
+std::vector<std::pair<uint16_t, std::string>> detail::RecordCache::queries(uint32_t index, Clock::time_point now, bool continuous) const {
     std::set<std::pair<uint16_t, std::string>> queries;
     auto found = impl_->interfaces.find(index);
     if (found == impl_->interfaces.end()) return {};
     for (const auto &[key, service] : found->second.services) {
         if (service.ptr_expires <= now) continue;
-        if (service.txt_expires <= now) queries.emplace(MDNS_RECORDTYPE_TXT, service.instance);
+        if (continuous || service.txt_expires <= now) queries.emplace(MDNS_RECORDTYPE_TXT, service.instance);
         bool has_srv = false;
         for (const auto &srv : service.srv) {
             if (srv.expires <= now) continue;
@@ -361,15 +371,38 @@ std::vector<std::pair<uint16_t, std::string>> detail::RecordCache::queries(uint3
                     (address.value.find(':') == std::string::npos ? v4 : v6) = true;
                 }
             }
-            if (!v4) queries.emplace(MDNS_RECORDTYPE_A, srv.value.target);
-            if (!v6) queries.emplace(MDNS_RECORDTYPE_AAAA, srv.value.target);
+            if (continuous || !v4) queries.emplace(MDNS_RECORDTYPE_A, srv.value.target);
+            if (continuous || !v6) queries.emplace(MDNS_RECORDTYPE_AAAA, srv.value.target);
         }
-        if (!has_srv) queries.emplace(MDNS_RECORDTYPE_SRV, service.instance);
+        if (continuous || !has_srv) queries.emplace(MDNS_RECORDTYPE_SRV, service.instance);
     }
     return {queries.begin(), queries.end()};
 }
 
 const std::vector<std::string> &detail::RecordCache::warnings() const { return impl_->warnings; }
+
+std::vector<uint32_t> detail::RecordCache::prune(Clock::time_point now) {
+    std::vector<uint32_t> indices;
+    impl_->service_count = impl_->host_count = 0;
+    for (auto &[index, iface] : impl_->interfaces) {
+        std::erase_if(iface.services, [&](const auto &entry) { return entry.second.ptr_expires <= now; });
+        std::set<std::string> targets;
+        for (auto &[key, service] : iface.services) {
+            std::erase_if(service.srv, [&](const auto &srv) { return srv.expires <= now; });
+            for (const auto &srv : service.srv) targets.insert(lower(srv.value.target));
+        }
+        std::erase_if(iface.hosts, [&](const auto &entry) { return !targets.contains(entry.first); });
+        impl_->service_count += iface.services.size(); impl_->host_count += iface.hosts.size();
+        if (!iface.services.empty()) indices.push_back(index);
+    }
+    std::erase_if(impl_->interfaces, [](const auto &entry) { return entry.second.services.empty(); });
+    return indices;
+}
+void detail::RecordCache::forget_service(uint32_t index, std::string_view instance) {
+    if (auto found = impl_->interfaces.find(index); found != impl_->interfaces.end())
+        found->second.services.erase(lower(instance));
+    prune();
+}
 
 namespace {
 
@@ -584,6 +617,13 @@ BrowseResult browse(const BrowseOptions &options) {
         return result;
     }
     auto scan_timeout = options.timeout;
+    const auto subscription_start = detail::RecordCache::Clock::now();
+    if (auto cached = detail::subscribed_browse(options)) {
+        if (cached->available || cached->cancelled) return *cached;
+        scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - subscription_start);
+        if (scan_timeout.count() <= 0) return *cached;
+        result.warnings = std::move(cached->warnings);
+    }
 #if defined(__ANDROID__) || defined(__APPLE__) || defined(XDB_HAVE_AVAHI) || defined(_WIN32)
     const auto native_start = detail::RecordCache::Clock::now();
 #ifdef __ANDROID__

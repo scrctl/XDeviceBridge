@@ -1,11 +1,13 @@
 #pragma once
 
 #include "wifi/Mdns.h"
+#include "wifi/DiscoverySubscription.h"
 
 namespace xdb::wifi::mdns::detail {
 
 // Only linked on macOS. No native DNS-SD dependency is exposed to SDK clients.
 BrowseResult bonjour_browse(const BrowseOptions &options);
+void bonjour_subscribe(std::stop_token stop, const DiscoveryPublish &publish);
 
 class BonjourAdvertiser {
   public:

@@ -55,6 +55,32 @@ int main() {
           "a native remove callback withdraws its service");
     check(!add({service, 16, {5, 'a'}, 120}), "malformed native TXT is rejected before parsing");
 
+    RecordCache persistent(true);
+    auto native_add = [&](const ResourceRecord &record) {
+        return persistent.add_packet(4, "en4", record_packet(record), now);
+    };
+    native_add({"_remotepairing._tcp.local.", 12, dns_name_data(service), 120});
+    native_add({service, 33, srv, 120}); native_add({service, 16, txt, 120});
+    native_add({"phone.local.", 28, ipv6, 120});
+    check(persistent.snapshot(now + std::chrono::hours(24)).size() == 1,
+          "native lifetime follows daemon removals, not a synthetic two-minute TTL");
+    check(persistent.queries(4, now, true).size() == 4,
+          "continuous discovery keeps SRV, TXT and both address watches after resolution");
+    const auto old_txt = txt;
+    const std::string changed = "identifier=replacement";
+    txt.assign(1, static_cast<uint8_t>(changed.size())); txt.insert(txt.end(), changed.begin(), changed.end());
+    native_add({service, 16, txt, 120}); native_add({service, 16, old_txt, 0});
+    check(persistent.snapshot(now)[0].identifier == "replacement", "old TXT removal preserves a newer replacement");
+    native_add({"_remotepairing._tcp.local.", 12, dns_name_data(service), 0});
+    check(persistent.prune(now).empty() && persistent.snapshot(now).empty(),
+          "native removal prunes unreachable service and host records");
+    for (int i = 0; i < 700; ++i) {
+        const auto instance = "peer" + std::to_string(i) + "._remotepairing._tcp.local.";
+        native_add({"_remotepairing._tcp.local.", 12, dns_name_data(instance), 120});
+        check(persistent.snapshot(now).size() == 1, "active limits are reclaimed across service churn");
+        native_add({"_remotepairing._tcp.local.", 12, dns_name_data(instance), 0}); persistent.prune(now);
+    }
+
     std::string error;
     HostRecords host{{"unit-host", "xdb - unit", "xdb - Mac", "AQIDBAUG", 49152},
         "unit-host._remotepairing-pairable-host._tcp.local.", "unit-host.local.",

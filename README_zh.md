@@ -61,8 +61,8 @@ OpenSSL 和 curl。未提供本地依赖时，nlohmann-json、pugixml、lwIP 和
 FFmpeg 音频解码另外需要 libswresample。项目不依赖 SDL、MaaUtils 或 OpenCV。
 
 macOS 的设备发现和临时 Wi-Fi 配对广播优先使用系统 Bonjour，无法打开时回退到
-直接 mDNS。发现超时仍用于收集一次新快照；这一步尚未增加 Server 持久设备缓存，
-也不代表已经验证设备可连接。
+直接 mDNS。桌面 Server 运行期间共享持续发现订阅；缓存已有结果时，`devices`
+直接读取快照，冷启动或空缓存才可能等到请求超时。广播缓存不代表已验证设备可连接。
 
 Linux 构建时若有 Avahi 开发头文件（Debian/Ubuntu 的 `libavahi-client-dev`），
 也会优先通过系统 Avahi 服务发现设备和广播配对主机。服务端按需加载 Avahi 客户端库；
@@ -72,7 +72,9 @@ xdb 不修改系统 mDNS 配置，也不要求 root 权限。
 Windows 的设备发现使用 `dnsapi.dll` 提供的系统 DNS-SD 接口。接口在运行时加载；
 接口不可用或原生启动失败时回退到直接 mDNS。配对广播继续使用直接 mDNS，确保
 UUID 主机名和所有地址记录一并发布，无需安装 Bonjour。
-与 macOS/Linux 后端一样，发现仍是有期限的一次快照，尚未维护持久设备列表或验证连接。
+与 macOS/Linux 一样，Server 保留原生发现回调，跟随服务、地址的更新和撤销，
+不使用周期性重新扫描定时器。最后一个 Server 关闭时释放订阅；系统服务失败会清空
+快照，后续请求可重新连接或回退。配对记录每次请求重新匹配，不把凭据或配对判断存入缓存。
 
 重新构建服务端后，若旧后台仍在运行，请先执行 `./build/xdb kill-server` 和
 `./build/xdb start-server` 再测试。替换磁盘上的程序不会更新现有后台进程的代码。

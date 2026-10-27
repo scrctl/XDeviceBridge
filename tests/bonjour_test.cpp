@@ -10,6 +10,7 @@
 #include <deque>
 #include <functional>
 #include <tuple>
+#include <set>
 
 namespace {
 using namespace xdb::wifi::mdns;
@@ -21,6 +22,9 @@ void check(bool ok, const char *label) {
 struct Fake {
     int fd[2]{-1, -1};
     unsigned opened = 0, closed = 0;
+    unsigned child_closed = 0;
+    uintptr_t next_ref = 1;
+    std::set<DNSServiceRef> live;
     bool unavailable = false, fail_receive = false, async_failure = false, withdraw = false;
     int fail_registration = -1;
     std::deque<std::function<void()>> events;
@@ -46,7 +50,10 @@ DNSServiceErrorType DNSSD_API DNSServiceCreateConnection(DNSServiceRef *ref) {
     *ref = reinterpret_cast<DNSServiceRef>(&fake);
     return kDNSServiceErr_NoError;
 }
-void DNSSD_API DNSServiceRefDeallocate(DNSServiceRef) {
+void DNSSD_API DNSServiceRefDeallocate(DNSServiceRef ref) {
+    if (ref != reinterpret_cast<DNSServiceRef>(&fake)) {
+        ++fake.child_closed; fake.live.erase(ref); return;
+    }
     ++fake.closed;
     ::close(fake.fd[0]); ::close(fake.fd[1]);
     fake.fd[0] = fake.fd[1] = -1;
@@ -86,10 +93,11 @@ DNSServiceErrorType DNSSD_API DNSServiceQueryRecord(DNSServiceRef *ref, DNSServi
     }
     if (type == 1) data = {198, 51, 100, 7};
     if (type == 28) { data.resize(16, 0); data[0] = 0xfe; data[1] = 0x80; data[15] = 7; }
-    const auto reference = *ref;
+    const auto reference = reinterpret_cast<DNSServiceRef>(++fake.next_ref);
+    *ref = reference; fake.live.insert(reference);
     const std::string owner = name;
     fake.enqueue([=] {
-        callback(reference, kDNSServiceFlagsAdd, index, kDNSServiceErr_NoError, owner.c_str(), type, 1,
+        if (fake.live.contains(reference)) callback(reference, kDNSServiceFlagsAdd, index, kDNSServiceErr_NoError, owner.c_str(), type, 1,
                  static_cast<uint16_t>(data.size()), data.data(), 120, context);
     });
     if (type == 28 && fake.withdraw) {
@@ -163,6 +171,34 @@ int main() {
     fake = {};
     fake.fail_receive = true;
     check(!bonjour_browse(options).available && fake.closed == 1, "daemon disconnect closes pending queries");
+    fake = {};
+    {
+        std::stop_source stop;
+        bool resolved = false;
+        bonjour_subscribe(stop.get_token(), [&](BrowseResult result) {
+            check(result.available, "continuous subscription remains available");
+            if (!result.advertisements.empty() && result.advertisements[0].endpoints.size() == 2) {
+                resolved = true; stop.request_stop();
+            }
+        });
+        check(resolved && fake.opened == 1 && fake.closed == 1 && fake.queries.size() == 5,
+              "continuous browser resolves once and stop wakes/cleans one shared native connection");
+    }
+    fake = {}; fake.withdraw = true;
+    {
+        std::stop_source stop;
+        bool resolved = false, removed = false;
+        bonjour_subscribe(stop.get_token(), [&](BrowseResult result) {
+            if (!result.advertisements.empty() && result.advertisements[0].endpoints.size() == 2) resolved = true;
+            if (resolved && result.advertisements.empty()) { removed = true; stop.request_stop(); }
+        });
+        check(removed && fake.child_closed == 4 && fake.closed == 1,
+              "withdrawal retires dependent queries, cached addresses and active limits");
+    }
+    fake = {}; fake.fail_receive = true;
+    bool failed_subscription = false;
+    bonjour_subscribe({}, [&](BrowseResult result) { failed_subscription |= !result.available; });
+    check(failed_subscription && fake.closed == 1, "subscription failure publishes unavailable and closes the source");
     fake = {};
     std::string error;
     {

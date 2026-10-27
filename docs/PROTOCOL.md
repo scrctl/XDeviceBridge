@@ -133,6 +133,15 @@ the discovery reason (`record_present`, `incomplete_record`, `identifier_hint`,
 candidate `paired` boolean still only describes a complete matching local record.
 No active connection or pairing is performed by this listing request.
 
+Desktop servers share one process-local native discovery subscription (Bonjour,
+optional Avahi, or Windows DNS-SD). A warm snapshot returns without waiting out
+`timeout_ms`; cold/empty snapshots can wait within that budget. Updates/removals
+come from system callbacks; the server does not periodically restart discovery.
+The cache contains advertisements only, and each request matches current pairing
+records independently. Last-server shutdown releases it; provider failure clears
+it and permits request-driven reconnection/direct-mDNS fallback. Android retains
+the embedding App's NSD lease model. No cache is persisted to disk.
+
 CLI-only selection allows omitting `-s` for `screenshot` / `ddi prepare` /
 `ddi status` / `ddi remove` when exactly one identified device is found. SDK DDI
 methods require an explicit nonempty UDID.

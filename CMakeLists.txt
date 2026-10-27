@@ -231,6 +231,7 @@ add_library(xdb_core STATIC
         src/wifi/PairRecord.cpp
         src/wifi/Mdns.cpp
         src/wifi/DnsSd.cpp
+        src/wifi/DiscoverySubscription.cpp
         src/wifi/DiscoveryIdentity.cpp
         src/wifi/PairingIdentity.cpp
         src/wifi/PairVerify.cpp
@@ -370,7 +371,7 @@ if(XDB_BUILD_TESTS AND XDB_BUILD_SERVER AND XDB_BUILD_CLI)
             set_tests_properties(xdb_install PROPERTIES TIMEOUT 30)
         endif()
     endif()
-    foreach(name ddi_selection ddi_service_transport json plist hid host_metadata discovery_status text_cancellation api_parameters output_file dns_sd)
+    foreach(name ddi_selection ddi_service_transport json plist hid host_metadata discovery_status discovery_subscription text_cancellation api_parameters output_file dns_sd)
         add_executable(xdb_${name}_test tests/${name}_test.cpp)
         target_link_libraries(xdb_${name}_test PRIVATE xdb_core)
         add_test(NAME xdb_${name} COMMAND xdb_${name}_test)

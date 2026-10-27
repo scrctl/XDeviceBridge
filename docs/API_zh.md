@@ -112,6 +112,8 @@
 返回 `{devices:Device[],warnings:string[],cancelled:bool,capabilities:{video_decode:bool}}`。
 部分发现可在带有警告或 `cancelled:true` 时成功；应检查这些字段，不能直接把空列表当成最终结论。
 不会认证每台列出的设备，也不会主动配对或连接。
+桌面 Server 在共享的原生发现快照就绪时直接读取；超时限制冷启动或空缓存的等待，
+不要求每次扫描等满该时长。缓存归属见[协议文档](PROTOCOL_zh.md)。
 
 `Device`：`udid:string`、`name:string`（可为空）、`candidates:Candidate[]`、
 `state:discovered|paired|connected`、`pairing:record_present|unknown`、

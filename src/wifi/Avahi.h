@@ -1,10 +1,12 @@
 #pragma once
 
 #include "wifi/Mdns.h"
+#include "wifi/DiscoverySubscription.h"
 
 namespace xdb::wifi::mdns::detail {
 
 BrowseResult avahi_browse(const BrowseOptions &options);
+void avahi_subscribe(std::stop_token stop, const DiscoveryPublish &publish);
 
 class AvahiAdvertiser {
   public:

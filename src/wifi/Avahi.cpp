@@ -21,8 +21,8 @@ using Clock = std::chrono::steady_clock;
 
 #define XDB_AVAHI_SYMBOLS(X) \
     X(avahi_simple_poll_new) X(avahi_simple_poll_free) X(avahi_simple_poll_get) \
-    X(avahi_simple_poll_iterate) X(avahi_client_new) X(avahi_client_free) \
-    X(avahi_client_errno) X(avahi_strerror) X(avahi_record_browser_new) \
+    X(avahi_simple_poll_iterate) X(avahi_simple_poll_wakeup) X(avahi_client_new) X(avahi_client_free) \
+    X(avahi_client_errno) X(avahi_strerror) X(avahi_record_browser_new) X(avahi_record_browser_free) \
     X(avahi_entry_group_new) X(avahi_entry_group_add_record) X(avahi_entry_group_commit)
 
 class Library {
@@ -96,12 +96,15 @@ struct Browser {
     Connection connection;
     RecordCache cache;
     std::set<uint32_t> interfaces;
-    std::set<std::tuple<uint32_t, uint16_t, std::string>> queries;
+    using Key = std::tuple<uint32_t, uint16_t, std::string>;
+    std::map<Key, AvahiRecordBrowser *> queries;
+    bool continuous = false;
     using RecordKey = std::tuple<uint32_t, std::string, uint16_t, std::vector<uint8_t>>;
     // Avahi can report the same record separately over IPv4 and IPv6.
     std::map<RecordKey, std::set<AvahiProtocol>> protocols;
     std::string error;
     size_t replies = 0;
+    explicit Browser(bool persistent = false) : cache(persistent), continuous(persistent) {}
 
     static void reply(AvahiRecordBrowser *, AvahiIfIndex index, AvahiProtocol protocol,
                       AvahiBrowserEvent event, const char *name, uint16_t record_class, uint16_t type,
@@ -117,7 +120,7 @@ struct Browser {
             if (!name || index <= 0 || record_class != 1 || length > 16384 || (length && !data) ||
                 (protocol != AVAHI_PROTO_INET && protocol != AVAHI_PROTO_INET6)) return;
             std::array<char, IF_NAMESIZE> interface_name{};
-            if (!if_indextoname(static_cast<unsigned>(index), interface_name.data())) return;
+            if (!if_indextoname(static_cast<unsigned>(index), interface_name.data()) && event == AVAHI_BROWSER_NEW) return;
             if (!browser.interfaces.contains(index) && browser.interfaces.size() >= 64) {
                 browser.error = "Avahi interface limit reached";
                 return;
@@ -157,13 +160,39 @@ struct Browser {
         if (queries.contains(key)) return true;
         if (queries.size() >= 512) { error = "Avahi query limit reached"; return false; }
         auto &api = connection.api;
-        if (!api.avahi_record_browser_new(connection.client, index ? static_cast<int>(index) : AVAHI_IF_UNSPEC,
-            AVAHI_PROTO_UNSPEC, name.c_str(), 1, type, AVAHI_LOOKUP_USE_MULTICAST, &reply, this)) {
+        auto *browser = api.avahi_record_browser_new(connection.client, index ? static_cast<int>(index) : AVAHI_IF_UNSPEC,
+            AVAHI_PROTO_UNSPEC, name.c_str(), 1, type, AVAHI_LOOKUP_USE_MULTICAST, &reply, this);
+        if (!browser) {
             error = std::string("Avahi start query: ") + api.avahi_strerror(api.avahi_client_errno(connection.client));
             return false;
         }
-        queries.insert(key);
+        queries.emplace(key, browser);
         return true;
+    }
+    bool refresh_queries() {
+        const auto active = cache.prune(); interfaces = {active.begin(), active.end()};
+        std::set<Key> wanted{{0, 12, "_remotepairing._tcp.local."}};
+        for (const auto index : interfaces)
+            for (const auto &[type, name] : cache.queries(index, Clock::now(), true)) wanted.emplace(index, type, name);
+        for (auto it = queries.begin(); it != queries.end();) {
+            if (wanted.contains(it->first)) { ++it; continue; }
+            connection.api.avahi_record_browser_free(it->second); it = queries.erase(it);
+        }
+        std::erase_if(protocols, [&](const auto &entry) {
+            const auto &[index, name, type, data] = entry.first;
+            return !wanted.contains(Key{index, type, name}) && !wanted.contains(Key{0, type, name});
+        });
+        for (const auto &[index, type, name] : wanted) if (!query(index, type, name)) return false;
+        return true;
+    }
+    BrowseResult snapshot() {
+        BrowseResult result;
+        result.advertisements = cache.snapshot(); result.warnings = cache.warnings();
+        result.available = error.empty() && !connection.failed && replies <= 2048;
+        if (!connection.error.empty()) result.warnings.push_back(connection.error);
+        if (!error.empty()) result.warnings.push_back(error);
+        else if (replies > 2048) result.warnings.push_back("Avahi callback failed");
+        return result;
     }
 };
 } // namespace
@@ -202,6 +231,27 @@ BrowseResult avahi_browse(const BrowseOptions &options) {
     if (!browser.error.empty()) result.warnings.push_back(browser.error);
     else if (browser.replies > 2048) result.warnings.push_back("Avahi callback failed");
     return result;
+}
+
+void avahi_subscribe(std::stop_token stop, const DiscoveryPublish &publish) {
+    Browser browser(true);
+    if (!browser.connection.open() || !browser.query(0, 12, "_remotepairing._tcp.local.")) {
+        auto result = browser.snapshot(); result.available = false; publish(std::move(result)); return;
+    }
+    // Avahi's wakeup API is thread-safe; the event-loop thread owns all other calls.
+    std::stop_callback wake(stop, [&] { browser.connection.api.avahi_simple_poll_wakeup(browser.connection.loop); });
+    publish(browser.snapshot());
+    while (!stop.stop_requested()) {
+        browser.replies = 0;
+        if (!browser.connection.poll(-1)) {
+            auto result = browser.snapshot(); result.available = false; publish(std::move(result)); return;
+        }
+        if (stop.stop_requested()) break;
+        browser.refresh_queries();
+        auto snapshot = browser.snapshot(); const auto available = snapshot.available;
+        publish(std::move(snapshot));
+        if (!available) return;
+    }
 }
 
 struct AvahiAdvertiser::Impl {

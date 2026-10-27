@@ -122,6 +122,9 @@ Result: `{devices:Device[],warnings:string[],cancelled:bool,
 capabilities:{video_decode:bool}}`. Partial discovery can succeed with warnings or
 `cancelled:true`; inspect these instead of treating an empty list as definitive.
 Does not authenticate every listed device or actively pair/connect it.
+Desktop servers read their shared native discovery snapshot when it is ready;
+the timeout bounds waiting for cold/empty discovery, not a mandatory scan delay.
+See the [protocol documentation](PROTOCOL.md) for cache ownership.
 
 `Device`: `udid:string`, `name:string` (may be empty), `candidates:Candidate[]`,
 `state:discovered|paired|connected`, `pairing:record_present|unknown`,

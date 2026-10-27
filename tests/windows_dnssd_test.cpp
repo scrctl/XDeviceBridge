@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <latch>
+#include <thread>
 
 namespace {
 using namespace xdb::wifi::mdns;
@@ -196,6 +198,40 @@ int main() {
     for (auto &item : fake.browsers)
         item->request.pBrowseCallback(ERROR_CANCELLED, item->request.pQueryContext, nullptr);
     check(fake.loaded == fake.unloaded, "late cancellation releases the retained state");
+    fake = {};
+    {
+        std::stop_source stop;
+        bool resolved = false, withdrawn = false;
+        detail::windows_subscribe(stop.get_token(), [&](BrowseResult value) {
+            check(value.available, "native subscription is available");
+            if (!resolved && !value.advertisements.empty() && value.advertisements[0].endpoints.size() == 4) {
+                resolved = true;
+                for (auto &item : fake.browsers) emit(*item, 0);
+            } else if (resolved && value.advertisements.empty()) {
+                withdrawn = true; stop.request_stop();
+            }
+        });
+        check(resolved && withdrawn && fake.resolutions == 2 && fake.loaded == fake.unloaded,
+              "continuous callbacks withdraw records without restarting or retaining completed resolutions");
+    }
+    fake = {};
+    {
+        std::stop_source stop;
+        std::latch ready(1);
+        bool notified = false;
+        std::jthread browser([&] {
+            detail::windows_subscribe(stop.get_token(), [&](BrowseResult value) {
+                if (!notified && !value.advertisements.empty() && value.advertisements[0].endpoints.size() == 4) {
+                    notified = true; ready.count_down();
+                }
+            });
+        });
+        ready.wait();
+        const auto started = std::chrono::steady_clock::now();
+        stop.request_stop(); browser.join();
+        check(std::chrono::steady_clock::now() - started < std::chrono::milliseconds(500) && fake.loaded == fake.unloaded,
+              "stop wakes an idle Windows subscription and releases callbacks promptly");
+    }
     fake = {};
     options.should_cancel = [] { return true; };
     check(detail::windows_browse(options).cancelled && fake.loaded == 0, "pre-cancelled scan does not load DNS-SD");

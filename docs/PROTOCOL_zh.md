@@ -128,6 +128,13 @@ connected 表示活跃、已认证的服务端会话，不是刚执行的存活�
 已有候选项 `paired` 布尔值仍仅描述完整且匹配的本地记录。
 列举请求不会主动连接或配对。
 
+桌面 Server 在进程内共享原生发现订阅（Bonjour、可选 Avahi 或 Windows DNS-SD）。
+已有快照时不再等满 `timeout_ms`；冷启动或空缓存可在该预算内等待。
+系统回调更新和撤销记录，Server 不会周期性重启扫描。
+缓存只存广播，每次请求独立匹配当前配对记录；最后一个 Server 关闭时释放订阅。
+原生后端失败会清空快照，后续请求可重连或回退到直接 mDNS。
+Android 继续使用 App 持有的 NSD 租约；缓存不写入磁盘。
+
 仅 CLI 的设备选择允许 `screenshot`／`ddi prepare`／`ddi status`／`ddi remove`
 在只发现一台已识别设备时省略 `-s`。SDK 的 DDI 方法要求显式传入非空 UDID。
 
