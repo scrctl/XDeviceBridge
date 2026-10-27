@@ -28,10 +28,11 @@ constexpr CommandHelp commands[] = {
      "  connected      The server holds an authenticated device session\n\n"
      "Pairing records do not prove connectivity. Use -l for candidate details.\n\n"
      "Examples:\n  xdb devices\n  xdb devices -l --wifi\n"},
-    {"pair", "xdb [-s UDID] pair [--wifi|--usb] [--timeout MS] [--json]",
+    {"pair", "xdb [-s UDID] pair [--wifi|--usb] [--display-brand NAME] [--timeout MS] [--json]",
      "Pair with an iOS device. Wi-Fi pairing is the default.\n\n"
      "  --wifi         Advertise this computer for Wi-Fi pairing\n"
      "  --usb          Pair through the system USB device service\n"
+     "  --display-brand NAME  Display prefix for new pairing (default: xdb)\n"
      "  --timeout MS   Pairing timeout (default: 120000; range: 1..300000)\n\n"
      "For Wi-Fi, open Settings > Privacy & Security > Developer Mode on the device,\n"
      "select this computer and enter the one-use code printed by xdb.\n"

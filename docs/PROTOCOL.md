@@ -12,7 +12,7 @@ individual local clients.
 
 ## Version and upgrade policy
 
-The package version (1.1.0), C ABI (1) and wire protocol (1) are separate contracts.
+The package version, C ABI (1) and wire protocol (1) are separate contracts.
 The protocol number in the frame header and `hello.params.protocol` must both be 1.
 A package version mismatch alone is not a reason to kill or replace a server.
 

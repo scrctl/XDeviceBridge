@@ -39,6 +39,9 @@ the client still uses the same protocol.
 Pairing displays the host as `xdb - <hostname>` (Android uses its device model),
 the model as `xdb - <hardware model>`, and a stable display serial `XDB-<16 hex digits>`.
 These labels do not replace the cryptographic pairing identity.
+Applications can select another display prefix through `pair.display_brand`, or
+`xdb pair --display-brand scrctl`. The default stays `xdb`; serials, keys and
+existing records are unaffected. See the [pairing API](docs/API.md#pair).
 
 The server owns device pairing records. Its API returns a UDID, never the private
 pairing material. Each Android application supplies its own private data directory;

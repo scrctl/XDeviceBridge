@@ -319,10 +319,11 @@ private:
     }
 };
 
-PairSetupResult run(MemStream &io, std::string &err) {
+PairSetupResult run(MemStream &io, std::string &err, std::string display_brand = "xdb") {
     FramedCarrier carrier(io);
     Rppairing channel(carrier);
     PairSetupOptions options;
+    options.display_brand = display_brand;
     options.probe_verify_first = io.phase == Phase::VerifyM2 || io.phase == Phase::VerifyM4;
     return pair_setup(channel, "HOST-IDENTIFIER", "host.local", "UDID", nullptr, options, err);
 }
@@ -411,10 +412,10 @@ void run_pair_setup_reply_tests(void (*check)(bool, const char *)) {
                       result.record.peer_alt_irk.empty(),
                   "Info/altIRK 保持可选，格式有效时才保存 altIRK");
         }
-        {
+        for (const auto *brand : {"xdb", "scrctl"}) {
             MemStream io(Phase::Normal, Form::Normal);
             std::string err;
-            const auto result = run(io, err);
+            const auto result = run(io, err, brand);
             check(result.ok && result.record.complete() && result.record.has_peer_identity(),
                   "合法 setup State 2/4/6、真实 SRP 证明与设备身份签名通过");
             check(io.setup_m1 == 1 && io.setup_m3 == 1 && io.setup_m5 == 1 && io.host_signature_valid &&
@@ -422,14 +423,14 @@ void run_pair_setup_reply_tests(void (*check)(bool, const char *)) {
             OpackValue info;
             const auto metadata = host_metadata("HOST-IDENTIFIER", err);
             check(metadata && opack_decode(io.host_info, info, err) &&
-                      info.find("model") && info.find("model")->str == host_model() &&
+                      info.find("model") && info.find("model")->str == host_model(brand) &&
                       info.find("remotepairing_serial_number") &&
                       info.find("remotepairing_serial_number")->str == metadata->serial_number,
                   "真实 M5 密文携带平台型号与稳定 XDB 显示序列号");
             check(info.find("accountID") && info.find("accountID")->str == "HOST-IDENTIFIER" &&
-                      info.find("name") && info.find("name")->str == host_display_name("host") &&
+                      info.find("name") && info.find("name")->str == host_display_name("host", brand) &&
                       result.record.host_identifier == "HOST-IDENTIFIER",
-                  "显示名称使用 xdb 前缀且不改变已签名 Identifier 或 accountID");
+                  "显示名称使用指定品牌前缀且不改变已签名 Identifier 或 accountID");
         }
         {
             MemStream io(Phase::VerifyM4, Form::Normal);

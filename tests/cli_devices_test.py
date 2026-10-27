@@ -28,8 +28,15 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     ddi_mounted = True
     cryptex_installed = True
     ddi_error = False
+    branding_supported = True
 
     def handle(name, params):
+        if name == 'server.info':
+            return dict(capabilities=dict(pairing_display_brand=branding_supported)), b''
+        if name == 'pair':
+            with server.lock:
+                server.calls.append((name, params))
+            return dict(udid='mock-iphone', reused=False), b''
         if name in ('ddi.status', 'ddi.remove'):
             with server.lock:
                 server.calls.append((name, params))
@@ -85,6 +92,13 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr
     assert server.methods() == before_help
+    run('pair', '--display-brand', 'scrctl')
+    assert any(name == 'pair' and p['display_brand'] == 'scrctl' for name, p in server.calls)
+    branding_supported = False
+    before_pair = server.methods().count('pair')
+    assert 'upgrade xdb Server' in run('pair', '--display-brand', 'scrctl', ok=False).stderr
+    assert server.methods().count('pair') == before_pair
+    assert 'only available for pair' in run('devices', '--display-brand', 'scrctl', ok=False).stderr
 
     removed = run('pairing', 'import', '/nonexistent/record', ok=False)
     assert 'Unknown command' in removed.stderr

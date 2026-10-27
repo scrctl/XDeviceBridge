@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <thread>
 using Json = nlohmann::json;
@@ -99,6 +100,7 @@ int main(int argc, char **argv) {
         }
         uint16_t port = 17423;
         std::string dir, output, serial, wifi_address, cache;
+        std::optional<std::string> display_brand;
         bool wifi = false, usb = false, replace = false, json_output = false, long_output = false;
         bool show_help = false, explicit_port = false;
         int timeout = -1;
@@ -127,7 +129,7 @@ int main(int argc, char **argv) {
             else if (a == "-l") {
                 long_output = true;
             } else if (a == "--port" || a == "--data-dir" || a == "--output" || a == "-s" ||
-                       a == "--serial" || a == "--timeout" || a == "--cache-dir") {
+                       a == "--serial" || a == "--timeout" || a == "--cache-dir" || a == "--display-brand") {
                 if (++i == argc)
                     throw std::invalid_argument("Missing value for " + a);
                 if (a == "--port") {
@@ -141,6 +143,8 @@ int main(int argc, char **argv) {
                     serial = argv[i];
                 else if (a == "--timeout")
                     timeout = number(argv[i], 0, 300000);
+                else if (a == "--display-brand")
+                    display_brand = argv[i];
                 else
                     cache = argv[i];
             } else if (a.starts_with('-'))
@@ -158,6 +162,8 @@ int main(int argc, char **argv) {
             throw std::invalid_argument("Choose --usb or --wifi");
         if (args.empty())
             throw std::invalid_argument("Missing command");
+        if (display_brand && args[0] != "pair")
+            throw std::invalid_argument("--display-brand is only available for pair");
         if (args[0] == "server") {
             if (args.size() != 1)
                 throw std::invalid_argument("Unexpected server argument");
@@ -305,6 +311,14 @@ int main(int argc, char **argv) {
             params["transport"] = usb ? "usb" : (wifi || args[0] == "pair" ? "wifi" : "auto");
             if (timeout >= 0)
                 params["timeout_ms"] = timeout;
+            if (display_brand) {
+                const auto info = request("server.info", Json::object(), false);
+                if (!info.value("ok", false) ||
+                    !info.value("result", Json::object()).value("capabilities", Json::object())
+                         .value("pairing_display_brand", false))
+                    throw std::runtime_error("This server does not support display_brand; upgrade xdb Server");
+                params["display_brand"] = *display_brand;
+            }
             return request(args[0], params).value("ok", false) ? 0 : 1;
         }
         if (args[0] != "screenshot" && args[0] != "ddi")

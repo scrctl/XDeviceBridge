@@ -66,6 +66,21 @@ void test_serial_derivation() {
     check(host_display_name("localhost") == host_model(), "Android advertises its model instead of localhost");
 #endif
     check(host_model().starts_with("xdb - "), "hardware model uses the xdb display prefix");
+    check(host_model("scrctl") == "scrctl" + host_model().substr(3),
+          "brand replaces only the model prefix");
+#ifndef __ANDROID__
+    check(host_display_name("My-Mac.local", "scrctl") == "scrctl - My-Mac" &&
+              host_display_name("scrctl - Desktop", "scrctl") == "scrctl - Desktop",
+          "custom brand preserves host-name formatting without duplicating its prefix");
+#else
+    check(host_display_name("localhost", "scrctl") == host_model("scrctl"),
+          "Android custom brand uses the model instead of localhost");
+#endif
+    std::string brand_error;
+    check(validate_display_brand("scrctl", brand_error), "application display brand is accepted");
+    for (const auto &brand : {std::string(), std::string(" "), std::string(" scrctl"),
+                              std::string("scrctl\n"), std::string("scr\0ctl", 7), std::string(65, 'a')})
+        check(!validate_display_brand(brand, brand_error), "invalid brand rejected before pairing");
     const auto uuid = detail::parse_machine_uuid("00112233-4455-6677-8899-AABBCCDDEEFF");
     std::string err = "stale";
     const auto hardware = detail::host_metadata_for_uuid("HOST-ID-OWNED", uuid, err);

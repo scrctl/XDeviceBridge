@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional `pair.display_brand` and `xdb pair --display-brand NAME` for
+  application-specific host names/models. Keep `xdb` as the default and preserve
+  display serials, pairing identifiers, keys and stored records. Advertise support
+  through `server.info.capabilities.pairing_display_brand` so clients can detect
+  older servers before requesting a custom prefix.
+
 ## 1.1.0 — 2026-10-27
 
 - Keep desktop native discovery subscriptions for the Server lifetime. Warm

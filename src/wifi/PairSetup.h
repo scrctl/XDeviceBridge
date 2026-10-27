@@ -41,6 +41,7 @@ struct PairSetupOptions {
     /// setupManualPairing 并要求设备确认，免提示升级还受主机授权限制（docs §25.8）。
     /// 调用方可显式指定 kind，不能仅凭握手能力字段推断主机已获得配对授权。
     std::string pairing_kind = "upgradeNonAutomationLockdownPairing";
+    std::string display_brand = "xdb";  ///< Display only; signed host identifiers are unchanged.
 };
 
 /// 在已连接的控制面执行配对，不负责建立连接或写入记录。成功时安装双向主密钥，

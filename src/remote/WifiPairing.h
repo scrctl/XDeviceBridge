@@ -18,6 +18,7 @@ struct WifiPairingOptions {
     /// Display the one-use six-digit PIN after the phone starts pairing.
     /// It is not a diagnostic message and must not be saved in logs.
     std::function<bool(std::string_view, std::string &)> display_pin;
+    std::string display_brand = "xdb";  ///< Prefix for the advertised host name and model.
 };
 
 /// Advertise a temporary computer on the LAN, accept one phone-initiated PIN

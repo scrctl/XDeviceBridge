@@ -1,8 +1,8 @@
-# XDB API reference — 1.1
+# XDB API reference
 
 English | [简体中文](API_zh.md)
 
-This document defines the public RPC contract for XDB 1.1, checked against `xdb.h`,
+This document defines the public RPC contract for the current source, checked against `xdb.h`,
 `Client.cpp`, `Server.cpp`, `Backend.cpp` and `Discovery.h`. Published releases
 follow the protocol 1 compatibility policy.
 [Wire framing and compatibility](PROTOCOL.md), [installation](INSTALL.md),
@@ -103,6 +103,9 @@ No params/session required. Result: `{protocol:1,version:string,pid:integer,
 device_transport:"usb-or-wifi"}`. `version` is the CMake package version; it does
 not replace wire protocol negotiation or prove a device is connected.
 
+`capabilities.pairing_display_brand:true` advertises support for `pair.display_brand`.
+Treat an absent capability as unsupported; older servers may ignore unknown fields.
+
 ### `server.stop`
 
 No params/session required. Result `{}` is sent before shutdown is requested.
@@ -148,6 +151,7 @@ Retain all candidates; one UDID can have multiple interfaces/addresses.
 | udid | string; default empty = pairing workflow selection |
 | timeout_ms | integer 1..300000; default 120000 |
 | repair | bool; default false; USB-only permission to attempt repair |
+| display_brand | string; default xdb; 1..64 UTF-8 bytes, no control characters or leading/trailing spaces |
 
 Result `{udid:string,reused:bool}`. Can emit progress and Wi-Fi PIN events. Keep
 request/socket alive while the user completes the phone interaction. Device trust,
@@ -156,6 +160,15 @@ empty-UDID pairing reserves the pairing operation against active device leases.
 An existing usable record can be verified and reused. Wi-Fi re-pairing can replace
 a stale record only after verification of the new pairing; normal clients never
 provide/import arbitrary pairing-file text.
+
+`display_brand` changes only the host name/model prefix for new pairing: for
+example `scrctl - <hostname>` or, on Android, `scrctl - <device model>`.
+It is used consistently in Wi-Fi advertising and pairing information, and in USB
+pairing information. Display serials remain `XDB-...`; keys, host identifiers and
+existing records are unchanged. Reusing a record does not rename the phone's saved
+computer. Check `server.info.capabilities.pairing_display_brand` before supplying
+this option to a separately installed server. The CLI exposes it as
+`xdb pair --display-brand scrctl` and rejects unsupported servers before pairing.
 
 ### `ddi.download`
 

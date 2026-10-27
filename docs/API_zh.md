@@ -1,8 +1,8 @@
-# XDB API 参考——1.1
+# XDB API 参考
 
 [English](API.md) | 简体中文
 
-本文定义 XDB 1.1 的公开 RPC 接口约定，已对照 `xdb.h`、`Client.cpp`、`Server.cpp`、
+本文定义当前源码的公开 RPC 接口约定，已对照 `xdb.h`、`Client.cpp`、`Server.cpp`、
 `Backend.cpp` 和 `Discovery.h`。已发布版本遵守协议 1 的兼容性策略。
 另见[通信分帧与兼容性](PROTOCOL_zh.md)、[安装](INSTALL_zh.md)、
 [设备验收证据](VALIDATION.md)和 [C SDK 参考](C_API_zh.md)。
@@ -95,6 +95,9 @@
 不需要参数或设备会话。返回 `{protocol:1,version:string,pid:integer,device_transport:"usb-or-wifi"}`。
 `version` 是 CMake 软件包版本，不能替代协议协商，也不能证明设备已连接。
 
+`capabilities.pairing_display_brand:true` 表示支持 `pair.display_brand`。
+缺少此能力字段时按不支持处理；旧服务端可能忽略未知请求字段。
+
 ### `server.stop`
 
 不需要参数或设备会话。先发送结果 `{}`，再请求关闭服务。
@@ -136,12 +139,20 @@ USB 地址／接口可为空，端口可为零；Wi-Fi IPv6 地址可能包含�
 | udid | 字符串；默认空，由配对流程选择 |
 | timeout_ms | 整数 1..300000；默认 120000 |
 | repair | 布尔值；默认 false；仅 USB 可请求修复 |
+| display_brand | 字符串；默认 xdb；1..64 个 UTF-8 字节，禁止控制字符及首尾空格 |
 
 返回 `{udid:string,reused:bool}`，可产生进度和 Wi-Fi PIN 事件。
 用户操作手机期间必须保持请求和套接字存活，可能需要信任、解锁或开发者设置。
 设备正在使用时返回 `device_busy`；空 UDID 配对会防止与活跃设备租约并发。
 已有可用凭据可经验证后复用。Wi-Fi 重新配对只在新配对验证成功后替换旧凭据；
 普通客户端不会提供或导入任意配对文件文本。
+
+`display_brand` 只改变新配对时的主机名称／型号前缀，例如 `scrctl - <主机名>`，
+Android 为 `scrctl - <设备型号>`。Wi-Fi 广播、配对信息及 USB 配对信息使用同一品牌。
+显示序列号仍为 `XDB-...`；密钥、主机标识和已有记录不变。复用记录不会重命名
+手机上已保存的电脑。连接独立安装的 Server 时，先检查
+`server.info.capabilities.pairing_display_brand`。命令行用法为
+`xdb pair --display-brand scrctl`，遇到不支持的 Server 会在配对前报错。
 
 ### `ddi.download`
 

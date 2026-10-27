@@ -5,6 +5,7 @@
 #include "wifi/PairRecord.h"
 #include "wifi/PairSetup.h"
 #include "wifi/PairVerify.h"
+#include "wifi/HostMetadata.h"
 
 #include <algorithm>
 #include <exception>
@@ -20,6 +21,7 @@ constexpr std::string_view kPairingService =
     "com.apple.internal.dt.coredevice.untrusted.tunnelservice";
 
 bool validate(const UsbPairingOptions &options, std::string &error) {
+    if (!wifi::validate_display_brand(options.display_brand, error)) return false;
     if (options.timeout_ms < 1 || options.timeout_ms > 300000) {
         error = "USB pairing timeout must be between 1 and 300000 ms";
         return false;
@@ -290,6 +292,7 @@ PairingResult pair_usb_remote(const UsbPairingOptions &options) {
         wifi::PairSetupOptions setup_options;
         setup_options.probe_verify_first = false;
         setup_options.pairing_kind = "setupManualPairing";
+        setup_options.display_brand = options.display_brand;
         return wifi::pair_setup(*opened->channel, host_identifier, hostname, udid,
                                options.progress, setup_options, operation_error);
     };

@@ -12,9 +12,11 @@ namespace xdb::wifi {
 
 /// Product display model, shared by USB INFO and the wireless advertisement,
 /// handshake and INFO defaults. It is separate from the signed peer identity.
-std::string_view host_model();
+std::string host_model(std::string_view display_brand = "xdb");
 // Android uses its product model instead of the usually unhelpful localhost.
-std::string host_display_name(std::string_view hostname);
+std::string host_display_name(std::string_view hostname, std::string_view display_brand = "xdb");
+// Display-only label: 1..64 UTF-8 bytes, no control characters or edge spaces.
+bool validate_display_brand(std::string_view display_brand, std::string &err);
 
 enum class HostMetadataSource { MachineUuid, SystemInstance, HostIdentifier };
 

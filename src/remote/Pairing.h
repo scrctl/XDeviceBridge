@@ -25,6 +25,7 @@ struct UsbPairingOptions {
     std::function<void(std::string_view)> progress;
     /// May be polled from an I/O cancellation monitor; must be thread safe.
     std::function<bool()> should_cancel;
+    std::string display_brand = "xdb";  ///< Display only; never changes pairing identities or keys.
 };
 
 struct PairingResult {

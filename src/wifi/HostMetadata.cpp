@@ -92,7 +92,17 @@ std::optional<PlatformIdentity> platform_identity() {
 }
 } // namespace
 
-std::string_view host_model() {
+bool validate_display_brand(std::string_view brand, std::string &err) {
+    if (brand.empty() || brand.size() > 64 || brand.front() == ' ' || brand.back() == ' ' ||
+        std::any_of(brand.begin(), brand.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; })) {
+        err = "display_brand must contain 1..64 bytes without control characters or leading/trailing spaces";
+        return false;
+    }
+    err.clear();
+    return true;
+}
+
+std::string host_model(std::string_view display_brand) {
     static const std::string model = [] {
         std::string value;
 #ifdef __APPLE__
@@ -124,23 +134,24 @@ std::string_view host_model() {
 #endif
         const auto first = value.find_first_not_of(" \t\r\n");
         if (first == std::string::npos)
-            return std::string("xdb - Unknown");
+            return std::string("Unknown");
         value = value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
-        return "xdb - " + value;
+        return value;
     }();
-    return model;
+    return std::string(display_brand) + " - " + model;
 }
 
-std::string host_display_name(std::string_view hostname) {
+std::string host_display_name(std::string_view hostname, std::string_view display_brand) {
 #ifdef __ANDROID__
-    return std::string(host_model());
+    return host_model(display_brand);
 #else
     std::string value(hostname);
     if (value.ends_with(".local"))
         value.resize(value.size() - 6);
     if (value.empty())
         value = "Unknown";
-    return value.starts_with("xdb - ") ? value : "xdb - " + value;
+    const auto prefix = std::string(display_brand) + " - ";
+    return value.starts_with(prefix) ? value : prefix + value;
 #endif
 }
 

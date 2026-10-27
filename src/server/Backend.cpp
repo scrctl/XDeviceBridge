@@ -19,6 +19,7 @@
 #include "transport/IoBudget.h"
 #include "util/Hex.h"
 #include "wifi/Crypto.h"
+#include "wifi/HostMetadata.h"
 #include "wifi/PairRecord.h"
 #include <algorithm>
 #include <cmath>
@@ -501,6 +502,9 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         return r;
     }
     if (method == "pair") {
+        const auto display_brand = p.value("display_brand", std::string("xdb"));
+        if (!wifi::validate_display_brand(display_brand, error))
+            return Reply::failure("invalid_params", error);
         auto udid = p.value("udid", std::string());
         auto lease = udid.empty() ? std::string("@pairing") : udid;
         if (!registry_.acquire(lease))
@@ -517,6 +521,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
             return Reply::failure("invalid_params", "Choose usb or wifi pairing");
         if (mode == "wifi") {
             remote::WifiPairingOptions o;
+            o.display_brand = display_brand;
             o.udid = udid;
             o.pairing_directory = directory_;
             o.should_cancel = cancel;
@@ -529,6 +534,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
             value = remote::pair_wifi_remote(o);
         } else {
             remote::UsbPairingOptions o;
+            o.display_brand = display_brand;
             o.udid = udid;
             o.pairing_directory = directory_;
             o.should_cancel = cancel;

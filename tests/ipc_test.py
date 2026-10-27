@@ -89,6 +89,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             info = request(c,'server.info')['result']
             assert info['protocol']==1 and info['version']
             assert client.xdb_client_version().decode() == info['version']
+            assert info['capabilities']['pairing_display_brand'] is True
             assert client.xdb_client_server_version(c).decode() == info['version']
             unknown = request(c,'future.optional.method')
             assert not unknown['ok'] and unknown['error']['code']=='not_connected'
@@ -96,6 +97,10 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
                 unknown_input = request(c, method, {'text': None})
                 assert not unknown_input['ok'] and unknown_input['error']['code'] == 'unknown_method', unknown_input
             assert request(c, 'server.info')['ok'], 'rejecting unknown input must retain the RPC connection'
+            for brand in ('', ' ', ' scrctl', 'scrctl\n', 'scr\x00ctl', 'a' * 65, None, 123):
+                rejected = request(c, 'pair', {'display_brand': brand})
+                assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
+            assert not Path(data.decode()).exists(), 'invalid branding created pairing state'
 
             for method in ('ddi.status', 'ddi.remove'):
                 for params in ({}, {'udid': ''}, {'udid': 'offline', 'port': 0},

@@ -337,6 +337,7 @@ PairingResult detail::save_wifi_pairing(const wifi::PairRecord &record,
 
 PairingResult pair_wifi_remote(const WifiPairingOptions &options) {
     PairingResult result;
+    if (!wifi::validate_display_brand(options.display_brand, result.error)) return result;
     if (options.timeout_ms < 1 || options.timeout_ms > 300000 || !options.display_pin) {
         result.error = "Wi-Fi pairing requires a PIN display callback and a timeout between 1 and 300000 ms";
         return result;
@@ -350,7 +351,8 @@ PairingResult pair_wifi_remote(const WifiPairingOptions &options) {
         }
         wifi::PairableHostOptions host;
         host.host_identifier = uuid(result.error);
-        host.host_name = wifi::host_display_name(wifi::local_hostname());
+        host.host_name = wifi::host_display_name(wifi::local_hostname(), options.display_brand);
+        host.host_model = wifi::host_model(options.display_brand);
         const auto key = wifi::ed25519_keypair(result.error);
         const auto irk = wifi::random_bytes(16, result.error);
         host.setup_pin = pin(result.error);
@@ -377,7 +379,7 @@ PairingResult pair_wifi_remote(const WifiPairingOptions &options) {
         advertisement.advertise_ipv6 = v6.has_value();
         auto advertised = wifi::mdns::Advertiser::start(advertisement, result.error);
         if (!advertised) return result;
-        progress(options, "Open Settings > Privacy & Security > Developer Mode on the device and select Pair with this xdb computer");
+        progress(options, "Open Settings > Privacy & Security > Developer Mode on the device and select Pair with this " + options.display_brand + " computer");
         progress(options, host.host_name);
         Socket accepted;
         std::string peer_address;

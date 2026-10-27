@@ -146,6 +146,7 @@ void xdb_server::run_client(Worker &worker) noexcept {
                 if (method == "server.info")
                     result.result = {
                         {"protocol", ipc::protocol_version}, {"version", XDB_VERSION_STRING}, {"device_transport", "usb-or-wifi"},
+                        {"capabilities", {{"pairing_display_brand", true}}},
 #ifdef _WIN32
                         {"pid", GetCurrentProcessId()}};
 #else
