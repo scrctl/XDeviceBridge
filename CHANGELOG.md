@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep desktop native discovery subscriptions for the Server lifetime. Warm
+  device listings and automatic Wi-Fi connection discovery reuse an updated
+  snapshot instead of waiting a fresh scan window. Follow native removals, reclaim
+  retired queries, and clear failed providers before request-driven recovery.
 - Finish idle image-mounter sessions with a bounded, cancellable `Hangup` before
   closing or reconnecting. This prevents repeated Wi-Fi DDI queries from waiting
   about 30 seconds on affected devices; incomplete uploads and failed transports

@@ -54,8 +54,9 @@ There is no SDL, MaaUtils or OpenCV dependency.
 
 On macOS, device discovery and temporary Wi-Fi pairing advertisements use the
 system Bonjour service. If it cannot be opened, xdb falls back to direct mDNS.
-The discovery timeout still bounds a fresh snapshot; this does not add a
-persistent server-side device cache or verify device connectivity.
+The desktop Server holds a shared discovery subscription while running. Warm
+`devices` requests read its snapshot immediately; cold/empty discovery may wait
+up to the requested timeout. Cached advertisements do not verify connectivity.
 
 Linux builds with Avahi development headers (`libavahi-client-dev` on Debian/
 Ubuntu) also use the system Avahi service for discovery and pairing advertisements.
@@ -67,8 +68,11 @@ Windows uses the system DNS-SD APIs from `dnsapi.dll` for device discovery. The
 APIs are loaded at runtime; unavailable APIs or native startup failures fall back
 to direct mDNS. Pairing advertisements retain direct mDNS so the UUID hostname
 and all address records are published together. No Bonjour installation is required.
-Like the macOS/Linux backends, discovery collects one bounded snapshot; it does
-not yet maintain a persistent device list or verify connectivity.
+Like macOS/Linux, the Server retains native discovery callbacks and follows
+service/address updates and removals. There is no periodic rescan timer. The last
+Server releases the subscription; daemon failure clears the snapshot, and a later
+request can reconnect or use the direct backend. Pairing records are matched on
+each request, rather than storing credentials or pairing decisions in this cache.
 
 After rebuilding the server, restart an already running daemon with
 `./build/xdb kill-server` and `./build/xdb start-server` before testing. Replacing

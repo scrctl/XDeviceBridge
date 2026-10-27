@@ -3,6 +3,7 @@
 #include "ipc/Json.h"
 #include "transport/IoBudget.h"
 #include "xdb/xdb.h"
+#include "wifi/DiscoverySubscription.h"
 #include <atomic>
 #include <filesystem>
 #include <mutex>
@@ -34,6 +35,7 @@ struct xdb_server {
     uint16_t port = 0;
     std::string directory;
     xdb::server::Registry registry;
+    std::shared_ptr<xdb::wifi::mdns::detail::DiscoverySubscription> discovery;
     std::atomic<bool> stopping{false};
     std::jthread accept_thread;
     // Only accept_thread mutates workers; stop first joins it, then interrupts workers.
@@ -272,6 +274,7 @@ xdb_server *xdb_server_start(uint16_t port, const char *directory) {
             return nullptr;
         }
         server->port = ntohs(addr.sin_port);
+        server->discovery = xdb::wifi::mdns::detail::acquire_discovery_subscription();
         server->accept_thread = std::jthread([raw = server.get()] { raw->accept_loop(); });
         return server.release();
     } catch (const std::exception &e) {

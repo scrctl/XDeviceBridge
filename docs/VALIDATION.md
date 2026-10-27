@@ -579,3 +579,36 @@ this device. Pairing advertisements retain direct mDNS and were not re-paired.
 API 24–33 fallback, physical network switching, simultaneous Ethernet/Wi-Fi and
 other Android vendors remain outside this real-device result. The controller
 network-state test simulates lifecycle transitions, not a physical Wi-Fi switch.
+
+## Desktop discovery subscriptions (2026-10-27)
+
+Validated the Server-lifetime discovery subscription on Apple Silicon macOS,
+Debian ARM64 in Parallels, and Windows 11 ARM64 in Parallels. Each used its native
+provider (Bonjour, Avahi, and Windows DNS-SD respectively). The existing iPhone
+was iPhone14,4 / iOS 27.0.1; pairing records were retained without replacement.
+
+Offline/IPC regression suites passed: 53 tests on macOS, 53 on Linux and 18 on
+Windows. Platform tests cover persistent record resolution and withdrawal;
+shared-cache tests cover concurrent readers, waiting for endpoint/TXT resolution,
+failure clearing, request-driven recovery and prompt shutdown. Cache tests cover
+daemon-owned expiry, late TXT removal and bounded storage across service churn.
+The final readiness changes also passed the three targeted discovery tests on
+each desktop platform. Android Server cross-compilation succeeded with NDK 29
+and the existing scrctl-android dependency binaries; this is compile evidence,
+not a new Android runtime or minimum-API acceptance result.
+
+Real command timings were measured inside each host, excluding VM command
+transport overhead. With the phone already discovered, repeated Wi-Fi `devices`
+queries took approximately 0.07 seconds on macOS, 0.15–0.16 seconds on Linux, and
+0.08–0.11 seconds on Windows. Ephemeral `_remotepairing._tcp.` test services
+appeared and disappeared through the same running subscriptions on all three
+hosts. Removal was checked by disappearance of the whole candidate, not merely
+its port. Native notifications can take time to arrive; these measurements are
+not a promise of immediate network propagation. macOS automatic-discovery DDI
+status completed in 0.83 seconds without changing the device's DDI state.
+
+The native loops block on provider events and explicit stop notifications, with
+no periodic rescan timer. Cold or empty discovery can still wait up to the
+requested budget. This round did not exercise physical Wi-Fi/network switching,
+daemon restart against a real provider, USB handoff, new phone pairing, or power
+consumption. Failure/retry behavior was covered with controlled providers.

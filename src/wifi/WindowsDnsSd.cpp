@@ -5,8 +5,10 @@
 
 #include <windows.h>
 #include <windns.h>
+#include <netioapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <set>
@@ -136,10 +138,13 @@ struct BrowseState {
     std::mutex mutex;
     std::condition_variable changed;
     RecordCache cache;
-    std::set<std::pair<uint32_t, std::string>> instances;
+    std::map<std::pair<uint32_t, std::string>, uint64_t> instances;
+    uint64_t revision = 0;
+    bool continuous = false;
     size_t replies = 0;
     bool stopped = false;
     std::string error;
+    explicit BrowseState(bool persistent = false) : cache(persistent), continuous(persistent) {}
 };
 
 void add_record(BrowseState &state, const NativeInterface &iface, const ResourceRecord &record) {
@@ -157,6 +162,8 @@ struct Query {
     DNS_SERVICE_RESOLVE_REQUEST resolve{};
     DNS_SERVICE_CANCEL cancellation{};
     bool resolving = false;
+    uint64_t generation = 0;
+    std::atomic<bool> finished{false};
 
     // A pending native request owns a shared callback context. Cancellation is
     // asynchronous: its final callback, not the scan's stack frame, releases it.
@@ -164,9 +171,11 @@ struct Query {
         auto *retained = static_cast<std::shared_ptr<Query> *>(context);
         auto query = *retained;
         std::unique_ptr<std::shared_ptr<Query>> finished(status == ERROR_CANCELLED ? retained : nullptr);
+        if (status == ERROR_CANCELLED) query->finished = true;
         try {
             std::lock_guard lock(query->state->mutex);
             if (!query->state->stopped) {
+                if (query->state->continuous) query->state->replies = 0;
                 if (status != ERROR_SUCCESS && status != ERROR_CANCELLED)
                     query->state->error = "Windows DNS-SD browse: " + std::to_string(status);
                 for (auto *rr = reinterpret_cast<DNS_RECORDW *>(records); rr; rr = rr->pNext) {
@@ -181,19 +190,24 @@ struct Query {
                     const auto record = convert_record(*rr);
                     if (!record) continue;
                     add_record(*query->state, query->iface, *record);
-                    if (rr->wType == DNS_TYPE_PTR && record->ttl &&
+                    if (rr->wType == DNS_TYPE_PTR &&
                         normalized_name(record->name) == "_remotepairing._tcp.local.") {
                         auto instance = name(rr->Data.PTR.pNameHost);
-                        if (normalized_name(instance).ends_with("._remotepairing._tcp.local.") &&
-                            query->state->instances.size() < 256)
-                            query->state->instances.emplace(query->iface.index, std::move(instance));
+                        const auto key = std::pair(query->iface.index, normalized_name(instance));
+                        if (key.second.ends_with("._remotepairing._tcp.local.")) {
+                            if (!record->ttl) query->state->instances.erase(key);
+                            else if (query->state->instances.contains(key) || query->state->instances.size() < 256)
+                                query->state->instances[key] = ++query->state->revision;
+                        }
                     }
                 }
+                ++query->state->revision;
                 query->state->changed.notify_one();
             }
         } catch (...) {
             std::lock_guard lock(query->state->mutex);
             query->state->replies = 2049;
+            ++query->state->revision;
             query->state->changed.notify_one();
         }
         if (records) query->api->free_records(records, DnsFreeRecordList);
@@ -201,14 +215,21 @@ struct Query {
     static void WINAPI resolved(DWORD status, void *context, PDNS_SERVICE_INSTANCE instance) noexcept {
         std::unique_ptr<std::shared_ptr<Query>> retained(static_cast<std::shared_ptr<Query> *>(context));
         auto query = *retained;
+        query->finished = true;
         try {
             std::lock_guard lock(query->state->mutex);
-            if (!query->state->stopped && status == ERROR_SUCCESS && instance &&
+            const auto current = query->state->instances.find({query->iface.index, normalized_name(utf8(query->owner.c_str()))});
+            const bool wanted = current != query->state->instances.end() && current->second == query->generation;
+            if (!query->state->stopped && wanted && status == ERROR_SUCCESS && instance &&
                 instance->dwPropertyCount <= 64) {
                 const auto owner = name(instance->pszInstanceName);
                 const auto target = name(instance->pszHostName);
                 if (normalized_name(owner) == normalized_name(utf8(query->owner.c_str())) &&
                     !target.empty() && instance->wPort) {
+                    if (query->state->continuous) {
+                        query->state->cache.forget_service(query->iface.index, owner);
+                        add_record(*query->state, query->iface, {"_remotepairing._tcp.local.", DNS_TYPE_PTR, dns_name_data(owner), 120});
+                    }
                     ResourceRecord srv{owner, DNS_TYPE_SRV, {}, 120};
                     util::append_be16(srv.data, instance->wPriority);
                     util::append_be16(srv.data, instance->wWeight);
@@ -239,23 +260,51 @@ struct Query {
                         add_record(*query->state, query->iface, {target, DNS_TYPE_AAAA, {bytes, bytes + 16}, 120});
                     }
                 }
-                query->state->changed.notify_one();
+            } else if (!query->state->stopped && wanted && query->state->continuous && status != ERROR_CANCELLED) {
+                query->state->error = "Windows DNS-SD resolve failed: " + std::to_string(status);
             }
+            ++query->state->revision;
+            query->state->changed.notify_one();
         } catch (...) {
             std::lock_guard lock(query->state->mutex);
             query->state->replies = 2049;
+            ++query->state->revision;
             query->state->changed.notify_one();
         }
         if (instance) query->api->free_instance(instance);
     }
 };
+
+struct InterfaceWatch {
+    HANDLE handle = nullptr;
+    std::shared_ptr<BrowseState> state;
+    explicit InterfaceWatch(std::shared_ptr<BrowseState> value) : state(std::move(value)) {
+#ifndef XDB_TEST_WINDOWS_DNSSD
+        if (state->continuous) {
+            const auto code = NotifyIpInterfaceChange(AF_UNSPEC, &changed, state.get(), FALSE, &handle);
+            if (code != NO_ERROR) state->error = "Cannot subscribe to Windows interface changes: " + std::to_string(code);
+        }
+#endif
+    }
+    ~InterfaceWatch() { if (handle) CancelMibChangeNotify2(handle); }
+    static void CALLBACK changed(void *context, MIB_IPINTERFACE_ROW *, MIB_NOTIFICATION_TYPE) noexcept {
+        auto &state = *static_cast<BrowseState *>(context);
+        try {
+            std::lock_guard lock(state.mutex);
+            if (state.stopped) return;
+            state.error = "Windows network interfaces changed; discovery will reconnect on the next request";
+            ++state.revision; state.changed.notify_all();
+        } catch (...) {}
+    }
+};
 } // namespace
 
-BrowseResult windows_browse(const BrowseOptions &options) {
+static BrowseResult run_browser(const BrowseOptions &options, std::stop_token stop, const DiscoveryPublish &publish) {
     BrowseResult result;
-    const auto deadline = Clock::now() + options.timeout;
+    const bool continuous = bool(publish);
+    const auto deadline = continuous ? Clock::time_point::max() : Clock::now() + options.timeout;
     const auto cancelled = [&] {
-        result.cancelled = options.should_cancel && options.should_cancel();
+        result.cancelled = stop.stop_requested() || (options.should_cancel && options.should_cancel());
         return result.cancelled;
     };
     if (cancelled() || options.timeout.count() <= 0) return result;
@@ -266,10 +315,12 @@ BrowseResult windows_browse(const BrowseOptions &options) {
         return result;
     }
     const auto interfaces = native_interfaces(result.warnings);
-    auto state = std::make_shared<BrowseState>();
+    auto state = std::make_shared<BrowseState>(continuous);
+    InterfaceWatch interfaces_changed(state);
+    std::stop_callback wake(stop, [&] { std::lock_guard lock(state->mutex); state->changed.notify_all(); });
     std::vector<std::shared_ptr<Query>> queries;
-    std::set<std::pair<uint32_t, std::string>> requested;
-    auto start = [&](const NativeInterface &iface, const std::string &owner, bool resolving) {
+    std::map<std::pair<uint32_t, std::string>, uint64_t> requested;
+    auto start = [&](const NativeInterface &iface, const std::string &owner, bool resolving, uint64_t generation = 0) {
         auto item = std::make_shared<Query>();
         item->api = api; item->state = state; item->iface = iface; item->owner = wide(owner);
         item->query_name = item->owner;
@@ -277,6 +328,7 @@ BrowseResult windows_browse(const BrowseOptions &options) {
         // tested Windows 11. Keep cache names absolute, API query names undotted.
         if (!item->query_name.empty() && item->query_name.back() == L'.') item->query_name.pop_back();
         item->resolving = resolving;
+        item->generation = generation;
         if (item->owner.empty()) { error = "Invalid Windows DNS-SD query name"; return false; }
         auto *retained = new std::shared_ptr<Query>(item);
         DWORD code;
@@ -308,22 +360,51 @@ BrowseResult windows_browse(const BrowseOptions &options) {
         if (!start(iface, "_remotepairing._tcp.local.", false)) break;
     }
     result.available = !queries.empty() && error.empty();
+    uint64_t observed = 0;
     while (result.available && !cancelled() && Clock::now() < deadline) {
-        std::vector<std::pair<uint32_t, std::string>> missing;
+        std::vector<std::pair<std::pair<uint32_t, std::string>, uint64_t>> missing;
         {
             std::unique_lock lock(state->mutex);
             if (!state->error.empty() || state->replies > 2048) break;
-            for (const auto &instance : state->instances)
-                if (requested.insert(instance).second) missing.push_back(instance);
-            if (missing.empty()) state->changed.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::milliseconds(50)));
+            std::erase_if(requested, [&](const auto &entry) { return !state->instances.contains(entry.first); });
+            for (const auto &[instance, generation] : state->instances) {
+                if (!requested.contains(instance) || requested[instance] != generation) {
+                    requested[instance] = generation; missing.push_back({instance, generation});
+                }
+            }
+            if (missing.empty() && state->revision == observed) {
+                if (continuous) state->changed.wait(lock, [&] { return state->revision != observed || stop.stop_requested(); });
+                else state->changed.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::milliseconds(50)));
+            }
+            observed = state->revision;
         }
-        for (const auto &[index, owner] : missing) {
+        for (auto it = queries.begin(); it != queries.end();) {
+            if ((*it)->resolving && (*it)->finished) it = queries.erase(it);
+            else if ((*it)->resolving && continuous &&
+                     (!requested.contains({(*it)->iface.index, normalized_name(utf8((*it)->owner.c_str()))}) ||
+                      requested[{(*it)->iface.index, normalized_name(utf8((*it)->owner.c_str()))}] != (*it)->generation)) {
+                api->cancel_resolve(&(*it)->cancellation); it = queries.erase(it);
+            } else ++it;
+        }
+        for (const auto &[instance, generation] : missing) {
+            const auto &[index, owner] = instance;
             const auto iface = std::find_if(interfaces.begin(), interfaces.end(),
                                            [&](const auto &entry) { return entry.index == index; });
             if (cancelled() || Clock::now() >= deadline || iface == interfaces.end() ||
-                !start(*iface, owner, true)) break;
+                !start(*iface, owner, true, generation)) break;
         }
         if (!error.empty()) break;
+        if (continuous && !cancelled()) {
+            BrowseResult snapshot;
+            {
+                std::lock_guard lock(state->mutex);
+                state->cache.prune();
+                snapshot.advertisements = state->cache.snapshot(); snapshot.warnings = state->cache.warnings();
+                snapshot.available = state->error.empty() && state->replies <= 2048;
+                if (!state->error.empty()) snapshot.warnings.push_back(state->error);
+            }
+            publish(std::move(snapshot));
+        }
     }
     {
         std::lock_guard lock(state->mutex);
@@ -336,10 +417,16 @@ BrowseResult windows_browse(const BrowseOptions &options) {
     }
     if (!error.empty()) { result.warnings.push_back(error); result.available = false; }
     for (const auto &query : queries) {
-        if (query->resolving) api->cancel_resolve(&query->cancellation);
+        if (query->resolving) { if (!query->finished) api->cancel_resolve(&query->cancellation); }
         else api->cancel_browse(&query->cancellation);
     }
     return result;
+}
+
+BrowseResult windows_browse(const BrowseOptions &options) { return run_browser(options, {}, {}); }
+void windows_subscribe(std::stop_token stop, const DiscoveryPublish &publish) {
+    const auto result = run_browser({}, stop, publish);
+    if (!stop.stop_requested()) publish(result);
 }
 
 } // namespace xdb::wifi::mdns::detail

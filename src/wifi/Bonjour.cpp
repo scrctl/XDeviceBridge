@@ -5,6 +5,7 @@
 #include <dns_sd.h>
 #include <net/if.h>
 #include <poll.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <array>
@@ -38,22 +39,23 @@ class Connection {
         return false;
     }
 
-    bool poll(int timeout_ms, std::string &error) {
+    bool poll(int timeout_ms, std::string &error, int wake_fd = -1) {
         const int fd = DNSServiceRefSockFD(ref);
         if (fd < 0) { error = "Bonjour connection has no event socket"; return false; }
-        pollfd ready{fd, POLLIN, 0};
-        const int count = ::poll(&ready, 1, timeout_ms);
+        pollfd ready[]{{fd, POLLIN, 0}, {wake_fd, POLLIN, 0}};
+        const int count = ::poll(ready, wake_fd < 0 ? 1 : 2, timeout_ms);
         if (count < 0) {
             if (errno == EINTR) return true;
             error = "Bonjour receive wait: " + std::string(std::strerror(errno));
             return false;
         }
         if (count == 0) return true;
-        if (ready.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        if (ready[1].revents) return true;
+        if (ready[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
             error = "Bonjour connection closed";
             return false;
         }
-        if (ready.revents & POLLIN) {
+        if (ready[0].revents & POLLIN) {
             const auto code = DNSServiceProcessResult(ref);
             if (code != kDNSServiceErr_NoError) {
                 error = dns_error("receive", code);
@@ -71,9 +73,13 @@ struct Browser {
     Connection connection;
     RecordCache cache;
     std::set<uint32_t> interfaces;
-    std::set<std::tuple<uint32_t, uint16_t, std::string>> queries;
+    using Key = std::tuple<uint32_t, uint16_t, std::string>;
+    std::map<Key, DNSServiceRef> queries;
+    bool continuous = false;
     std::string error;
     size_t replies = 0;
+
+    explicit Browser(bool persistent = false) : cache(persistent), continuous(persistent) {}
 
     static void DNSSD_API reply(DNSServiceRef, DNSServiceFlags flags, uint32_t interface_index,
                                 DNSServiceErrorType code, const char *name, uint16_t type,
@@ -93,13 +99,13 @@ struct Browser {
             if (!name || record_class != kDNSServiceClass_IN || !interface_index ||
                 length > 16384 || (length && !data)) return;
             std::array<char, IF_NAMESIZE> interface_name{};
-            if (!if_indextoname(interface_index, interface_name.data())) return;
+            if (!if_indextoname(interface_index, interface_name.data()) && (flags & kDNSServiceFlagsAdd)) return;
             if (!browser.interfaces.contains(interface_index) && browser.interfaces.size() >= 64) {
                 browser.error = "Bonjour interface limit reached";
                 return;
             }
-            // An active DNS-SD query owns expiry and reports removals. Its TTL
-            // may be the original cached value, so keep adds for this <=60s scan.
+            // The daemon owns TTL expiry and reports removals. Continuous caches
+            // retain records until that notification rather than guessing a TTL.
             ResourceRecord record{name, type, {}, (flags & kDNSServiceFlagsAdd) ? 120U : 0U};
             if (length) {
                 const auto *bytes = static_cast<const uint8_t *>(data);
@@ -126,8 +132,37 @@ struct Browser {
             error = dns_error("start query", code);
             return false;
         }
-        queries.insert(key);
+        queries.emplace(key, child);
         return true;
+    }
+
+    bool refresh_queries() {
+        if (continuous) {
+            const auto active = cache.prune();
+            interfaces = {active.begin(), active.end()};
+        }
+        std::set<Key> wanted{{0, kDNSServiceType_PTR, "_remotepairing._tcp.local."}};
+        for (const auto index : interfaces)
+            for (const auto &[type, name] : cache.queries(index, Clock::now(), continuous))
+                wanted.emplace(index, type, name);
+        if (continuous) {
+            for (auto it = queries.begin(); it != queries.end();) {
+                if (wanted.contains(it->first)) { ++it; continue; }
+                DNSServiceRefDeallocate(it->second);
+                it = queries.erase(it);
+            }
+        }
+        for (const auto &[index, type, name] : wanted)
+            if (!query(index, type, name)) return false;
+        return true;
+    }
+    BrowseResult snapshot() {
+        BrowseResult result;
+        result.advertisements = cache.snapshot(); result.warnings = cache.warnings();
+        result.available = error.empty() && replies <= kMaxReplies;
+        if (!error.empty()) result.warnings.push_back(error);
+        else if (replies > kMaxReplies) result.warnings.push_back("Bonjour callback failed");
+        return result;
     }
 };
 } // namespace
@@ -166,6 +201,32 @@ BrowseResult bonjour_browse(const BrowseOptions &options) {
     if (!browser.error.empty()) result.warnings.push_back(browser.error);
     else if (browser.replies > kMaxReplies) result.warnings.push_back("Bonjour callback failed");
     return result;
+}
+
+void bonjour_subscribe(std::stop_token stop, const DiscoveryPublish &publish) {
+    struct Wake {
+        int fd[2]{-1, -1};
+        ~Wake() { for (int value : fd) if (value >= 0) ::close(value); }
+    } wake;
+    if (::pipe(wake.fd)) { publish({{}, false, false, {"Cannot create Bonjour stop notification"}}); return; }
+    // No periodic scan or idle polling: stop wakes the same blocking poll as DNS-SD.
+    std::stop_callback stopped(stop, [&] { const char byte = 1; (void)::write(wake.fd[1], &byte, 1); });
+    Browser browser(true);
+    if (!browser.connection.open(browser.error) ||
+        !browser.query(0, kDNSServiceType_PTR, "_remotepairing._tcp.local.")) {
+        publish(browser.snapshot()); return;
+    }
+    publish(browser.snapshot());
+    while (!stop.stop_requested()) {
+        browser.replies = 0;
+        if (!browser.connection.poll(-1, browser.error, wake.fd[0])) { publish(browser.snapshot()); return; }
+        if (stop.stop_requested()) break;
+        browser.refresh_queries();
+        auto snapshot = browser.snapshot();
+        const bool available = snapshot.available;
+        publish(std::move(snapshot));
+        if (!available) return;
+    }
 }
 
 struct BonjourAdvertiser::Impl {

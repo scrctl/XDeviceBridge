@@ -26,6 +26,7 @@ struct Fake {
     int fail_record = -1;
     std::string missing_symbol;
     unsigned queries = 0, commits = 0, freed = 0, loaded = 0;
+    unsigned queries_freed = 0;
     AvahiEntryGroupCallback group_callback = nullptr;
     void *group_context = nullptr;
     std::deque<std::function<void()>> events;
@@ -39,6 +40,7 @@ HostAdvertisement host{"unit-host", "xdb - unit", "xdb - Linux", "AQIDBAUG", 491
 extern "C" {
 AvahiSimplePoll *avahi_simple_poll_new() { return reinterpret_cast<AvahiSimplePoll *>(&fake); }
 void avahi_simple_poll_free(AvahiSimplePoll *) { fake.cleanup.push_back("poll"); }
+void avahi_simple_poll_wakeup(AvahiSimplePoll *) {}
 const AvahiPoll *avahi_simple_poll_get(AvahiSimplePoll *) { return reinterpret_cast<const AvahiPoll *>(&fake); }
 int avahi_simple_poll_iterate(AvahiSimplePoll *, int timeout) {
     if (fake.fail_poll) return -1;
@@ -60,6 +62,7 @@ void avahi_client_free(AvahiClient *) {
     fake.events.clear();
     fake.cleanup.push_back("client");
 }
+int avahi_record_browser_free(AvahiRecordBrowser *) { ++fake.queries_freed; return 0; }
 int avahi_client_errno(AvahiClient *) { return -1; }
 const char *avahi_strerror(int) { return "test daemon error"; }
 AvahiRecordBrowser *avahi_record_browser_new(AvahiClient *, AvahiIfIndex interface_index, AvahiProtocol protocol,
@@ -141,8 +144,8 @@ void *dlsym(void *, const char *name) noexcept {
     if (name == fake.missing_symbol) return nullptr;
 #define SYMBOL(value) if (std::strcmp(name, #value) == 0) return reinterpret_cast<void *>(&value);
     SYMBOL(avahi_simple_poll_new) SYMBOL(avahi_simple_poll_free) SYMBOL(avahi_simple_poll_get)
-    SYMBOL(avahi_simple_poll_iterate) SYMBOL(avahi_client_new) SYMBOL(avahi_client_free)
-    SYMBOL(avahi_client_errno) SYMBOL(avahi_strerror) SYMBOL(avahi_record_browser_new)
+    SYMBOL(avahi_simple_poll_iterate) SYMBOL(avahi_simple_poll_wakeup) SYMBOL(avahi_client_new) SYMBOL(avahi_client_free)
+    SYMBOL(avahi_client_errno) SYMBOL(avahi_strerror) SYMBOL(avahi_record_browser_new) SYMBOL(avahi_record_browser_free)
     SYMBOL(avahi_entry_group_new) SYMBOL(avahi_entry_group_add_record) SYMBOL(avahi_entry_group_commit)
 #undef SYMBOL
     return nullptr;
@@ -191,6 +194,30 @@ int main() {
           "missing daemon cleans up before direct fallback");
     fake = {}; fake.fail_poll = true;
     check(!avahi_browse(options).available && fake.freed == 1, "failed event loop closes its browsers");
+    fake = {};
+    {
+        std::stop_source stop;
+        bool resolved = false;
+        avahi_subscribe(stop.get_token(), [&](BrowseResult result) {
+            check(result.available, "continuous Avahi subscription is available");
+            if (!result.advertisements.empty() && result.advertisements[0].endpoints.size() == 2) {
+                resolved = true; stop.request_stop();
+            }
+        });
+        check(resolved && fake.loaded == 1 && fake.queries == 5 && fake.freed == 1,
+              "persistent Avahi queries resolve without repeated native scans");
+    }
+    fake = {}; fake.withdraw_both = true;
+    {
+        std::stop_source stop;
+        bool resolved = false, removed = false;
+        avahi_subscribe(stop.get_token(), [&](BrowseResult result) {
+            if (!result.advertisements.empty() && result.advertisements[0].endpoints.size() == 2) resolved = true;
+            if (resolved && result.advertisements.empty()) { removed = true; stop.request_stop(); }
+        });
+        check(removed && fake.freed == 1 && fake.queries_freed == 4,
+              "continuous Avahi withdrawal prunes service and dependent queries");
+    }
     std::string error;
     fake = {};
     {

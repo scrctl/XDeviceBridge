@@ -52,6 +52,7 @@ struct BrowseResult {
 /// macOS 优先通过系统 Bonjour，Linux 编入 Avahi 后优先通过其系统服务，
 /// Windows 优先通过系统 DNS-SD 查询；Android App 安装 NSD 适配后使用其订阅快照。
 /// 原生后端不可用时使用各个组播网卡直接查询。
+/// 桌面 Server 存活时共享原生持续订阅，读取其快照；没有 Server 所持订阅时按请求查询。
 /// 查询有期限，不配对、不连接设备服务。
 /// 零超时直接返回空快照，不枚举接口或发包。取消保留已收到的快照并置 cancelled，
 /// 收包等待最多 50 ms；接口或网络错误放入 warnings，不写终端。
@@ -112,11 +113,12 @@ std::vector<HostReply> host_query_reply(const HostRecords &records, std::span<co
                                       bool legacy, std::string &error);
 
 /// 扫描器的报文聚合器；单独开放这条内部边界，方便离线验证压缩名称和跨报文关联。
-/// 不缓存到下一次扫描。now 参数只用于本次扫描的 TTL 判断。
+/// 直接扫描按 TTL 过期；原生持续订阅由 daemon 的 remove 回调决定生存期。
 class RecordCache {
   public:
     using Clock = std::chrono::steady_clock;
-    RecordCache();
+    // Native daemons own expiry; keep adds until their explicit remove callback.
+    explicit RecordCache(bool daemon_managed = false);
     ~RecordCache();
     RecordCache(const RecordCache &) = delete;
     RecordCache &operator=(const RecordCache &) = delete;
@@ -129,7 +131,11 @@ class RecordCache {
     std::vector<Advertisement> snapshot(Clock::time_point now = Clock::now()) const;
     /// 尚缺的 SRV/TXT 或主机 A/AAAA 查询，按接口隔离。
     std::vector<std::pair<uint16_t, std::string>> queries(uint32_t interface_index,
-                                                        Clock::time_point now = Clock::now()) const;
+                                                        Clock::time_point now = Clock::now(),
+                                                        bool continuous = false) const;
+    // Discard withdrawn services/unreferenced hosts and reclaim active limits.
+    std::vector<uint32_t> prune(Clock::time_point now = Clock::now());
+    void forget_service(uint32_t index, std::string_view instance);
     const std::vector<std::string> &warnings() const;
 
   private:
