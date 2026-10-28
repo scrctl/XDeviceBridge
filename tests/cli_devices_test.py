@@ -144,7 +144,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     short = run('devices').stdout
     long = run('devices', '-l').stdout
     assert 'mock-iphone\tpaired' in short and 'en0' not in short
-    assert 'connection:unverified' in long and '[fe80::1%4]:49152' in long and 'interface:en0' in long
+    assert 'connection:' not in long and '[fe80::1%4]:49152' in long and 'interface:en0' in long
     assert long.splitlines()[0] == 'List of iOS devices'
     assert 'name:Test iPhone' in long and 'pairing:record_present' not in long
     candidates = [line for line in long.splitlines() if line.startswith('  wifi ')]

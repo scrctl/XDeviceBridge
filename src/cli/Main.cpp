@@ -62,7 +62,6 @@ void print_devices(const Json &result, bool detailed) {
         if (detailed) {
             auto name = device.value("name", std::string());
             if (!name.empty()) std::cout << "  name:" << name;
-            std::cout << "  connection:" << device.value("connection", std::string("unverified"));
         }
         std::cout << '\n';
         if (!detailed) continue;
