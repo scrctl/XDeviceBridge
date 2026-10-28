@@ -146,7 +146,7 @@ or persisted endpoint. Idle TCP keepalive/actual I/O detects loss; detection tim
 depends on the OS. Close stale sessions before explicit connect/open; old
 attachments are invalid. Disconnect manual connections before pairing or DDI management.
 
-### Parallel read associations (development source)
+### Parallel read associations (since 1.3)
 
 When `server.info.capabilities.read_only_sessions` is true, `connection.open` may
 set `access:"read"`. Readers share the device and may read an existing video pump;

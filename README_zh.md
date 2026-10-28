@@ -152,11 +152,11 @@ IPv6 的端口用方括号，例如 `xdb connect '[fe80::1%en0]:49152'`。
 `disconnect` 使使用该连接的会话失效，但保留配对和 DDI；掉线、停止 Server 也会关闭连接，
 不自动重连。默认 control 接入仍独占。重新配对或管理 DDI 前先 disconnect。
 
-当前开发版的 Server 通过 `read_only_sessions` 能力支持镜像期间并行截图／查询。
+1.3 起的 Server 通过 `read_only_sessions` 能力支持镜像期间并行截图／查询。
 CLI 截图会自动使用只读关联；读取客户端退出不影响镜像，也不能修改输入或媒体配置。
 1.2.0 及更早的已发布 Server 保留原有独占行为。详见[API](docs/API_zh.md#connectionopen)。
 
-当前开发版还通过 `shared_control_sessions` 支持显式 `access:"shared"`：独立镜像客户端
+1.3 起还通过 `shared_control_sessions` 支持显式 `access:"shared"`：独立镜像客户端
 可同时控制手机并共享同一视频生产者。默认接入仍独占，音频只允许一个消费组，录制须使用独占会话。
 
 `devices` 为每个发现或手动连接的设备输出一行；`devices -l` 额外显示名称、地址、网络接口以及

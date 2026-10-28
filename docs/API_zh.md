@@ -108,7 +108,7 @@ attachment 继承创建时的读／控制类型，不能把只读 attachment 附
 `capabilities.manual_connections:true` 表示支持 1.2 新增的 `connect`／`disconnect`。
 CLI 会在发送前检查此能力，缺失时明确提示升级 Server；旧版未实现这些方法。通信协议和 C ABI 仍为 1。
 
-`capabilities.read_only_sessions:true` 表示当前开发版支持 `connection.open.access`。
+`capabilities.read_only_sessions:true` 表示 1.3 起支持 `connection.open.access`。
 SDK 调用方须先检查此能力；1.2.0 及更早的 Server 会忽略未知字段，不能依赖它们执行只读限制。
 CLI 截图会探测此能力，旧服务端保留原有行为。
 `capabilities.shared_control_sessions:true` 另行表示支持下述显式 shared 控制组；公共 C ABI 与通信协议仍为 1。

@@ -137,7 +137,7 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 关闭失效会话后可以显式重新 connect/open；旧 attachment 不再有效。
 重新配对或管理 DDI 前须先断开手动连接。
 
-### 并行只读关联（当前开发版）
+### 并行只读关联（1.3 起）
 
 `server.info.capabilities.read_only_sessions` 为 true 时，`connection.open` 可指定
 `access:"read"`。读取客户端共享设备及既有视频的读取能力，不启动第二路视频。

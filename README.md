@@ -159,13 +159,13 @@ Transport loss or Server exit also closes it, with no automatic reconnect. Defau
 remains exclusive. Disconnect before pairing or
 DDI management.
 
-Development Servers advertising `read_only_sessions` support parallel screenshots
+Servers since 1.3 advertising `read_only_sessions` support parallel screenshots
 and queries while mirroring. The screenshot CLI uses read access automatically;
 reader exit preserves the mirror, and readers cannot change input/media state.
 Released Servers up to 1.2.0 retain their existing exclusive behavior. See the
 [API](docs/API.md#connectionopen).
 
-Development Servers also advertise `shared_control_sessions`: SDK clients may
+Servers since 1.3 also advertise `shared_control_sessions`: SDK clients may
 explicitly open `access:"shared"` to control the same phone from independent
 mirrors sharing one video producer. Exclusive access remains the default.
 Audio has one consumer; recording requires an exclusive session.

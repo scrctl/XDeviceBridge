@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-10-28
 
 - Wake the request disconnect monitor immediately when an RPC completes, removing
   an avoidable polling wait of up to 50 ms before replies. Preserve bounded EOF

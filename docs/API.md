@@ -120,7 +120,7 @@ upgrade when absent; older servers do not implement these methods. Protocol and
 C ABI remain 1.
 
 `capabilities.read_only_sessions:true` advertises `connection.open.access` in the
-current development source. SDK callers must check this first: released Servers
+1.3 and later. SDK callers must check this first: released Servers
 up to 1.2.0 ignore unknown fields and cannot enforce the read role. The screenshot
 CLI probes the capability and retains legacy behavior on older Servers.
 `capabilities.shared_control_sessions:true` separately advertises explicit shared control groups below. C ABI and wire protocol remain 1.
