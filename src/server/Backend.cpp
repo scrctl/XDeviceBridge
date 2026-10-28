@@ -125,6 +125,11 @@ struct Backend::Session {
     Registry &registry;
     std::string udid, attachment, read_attachment;
     unsigned control_clients;
+    bool shared_mode = false;
+    // Non-owning entries are protected by control_mutex, including destruction.
+    std::map<std::string, SharedControl *> shared_controls;
+    Json video_profile;
+    std::string audio_owner, touch_owner;
     std::shared_mutex media_mutex;
     std::mutex control_mutex, pcm_mutex;
     bool pcm_started = false;
@@ -175,19 +180,27 @@ struct Backend::Session {
         buttons.reset();
         hid.reset();
     }
-    void detach_control() {
-        std::unique_lock media_lock(media_mutex);
-        std::lock_guard control_lock(control_mutex);
+    void detach_control_locked() {
         if (retired || control_clients == 0 || --control_clients != 0) return;
         std::string ignored;
         finish(ignored);
         release_inputs();
+        shared_mode = false;
+        video_profile = Json();
+        audio_owner.clear();
+        touch_owner.clear();
         // Readers may retain the Device for screenshots, but not its old media
         // ownership or a capability that could revive a departed controller.
         std::lock_guard lock(registry.mutex);
         registry.sessions.erase(attachment);
         attachment.clear();
     }
+    void detach_control() {
+        std::unique_lock media_lock(media_mutex);
+        std::lock_guard control_lock(control_mutex);
+        detach_control_locked();
+    }
+    void detach_shared(SharedControl &);
     void shutdown() {
         std::unique_lock media_lock(media_mutex);
         std::lock_guard control_lock(control_mutex);
@@ -201,11 +214,62 @@ struct Backend::Session {
         std::lock_guard lock(registry.mutex);
         registry.sessions.erase(attachment);
         registry.sessions.erase(read_attachment);
+        for (const auto &[key, weak] : shared_controls) registry.shared_attachments.erase(key);
         registry.device_sessions.erase(udid);
         registry.devices.erase(udid);
     }
     ~Session() { shutdown(); }
 };
+// Each independent mirror owns one group. Its polling/job sockets share this
+// object, so closing an auxiliary socket cannot release the mirror's inputs.
+struct Backend::SharedControl {
+    std::shared_ptr<Session> session;
+    std::string attachment;
+    std::set<uint16_t> keys;
+    std::set<std::pair<uint16_t, uint16_t>> buttons;
+    bool registered = false;
+    explicit SharedControl(std::shared_ptr<Session> s) : session(std::move(s)) {}
+    ~SharedControl() { if (registered) session->detach_shared(*this); }
+};
+void Backend::Session::detach_shared(SharedControl &owner) {
+    std::unique_lock media_lock(media_mutex);
+    std::lock_guard control_lock(control_mutex);
+    if (retired) return;
+    shared_controls.erase(owner.attachment);
+    std::set<uint16_t> remaining_keys;
+    std::set<std::pair<uint16_t, uint16_t>> remaining_buttons;
+    for (const auto &[key, other] : shared_controls) {
+        remaining_keys.insert(other->keys.begin(), other->keys.end());
+        remaining_buttons.insert(other->buttons.begin(), other->buttons.end());
+    }
+    std::string ignored;
+    if (hid && !connection->closed) {
+        if (touching && touch_owner == owner.attachment) {
+            hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
+            touching = false;
+            touch_owner.clear();
+        }
+        // Also refresh after a failed final release, when the owner's desired
+        // key set is already empty but the device may still hold its old keys.
+        hid->send_report(hid::kSurfaceKeyboard,
+                         hid::keyboard_report({remaining_keys.begin(), remaining_keys.end()}), ignored);
+    }
+    if (buttons && !connection->closed)
+        for (auto [page, code] : owner.buttons)
+            if (!remaining_buttons.contains({page, code})) buttons->release(page, code, ignored);
+    keys = std::move(remaining_keys);
+    held_buttons = std::move(remaining_buttons);
+    if (audio_owner == owner.attachment) {
+        audio.reset();
+        audio_owner.clear();
+        pcm_started = false;
+    }
+    {
+        std::lock_guard lock(registry.mutex);
+        registry.shared_attachments.erase(owner.attachment);
+    }
+    detach_control_locked();
+}
 bool Backend::has_session() const { return session_ && !session_->connection->closed; }
 void Backend::disconnect_connection(Registry &registry, const std::shared_ptr<DeviceConnection> &connection) {
     // Wake blocked service I/O before waiting for the session's media/control locks.
@@ -236,7 +300,8 @@ Backend::~Backend() { close(); }
 void Backend::close() {
     auto session = std::move(session_);
     const bool was_read_only = std::exchange(read_only_, false);
-    if (session && !was_read_only) session->detach_control();
+    if (shared_control_) shared_control_.reset();
+    else if (session && !was_read_only) session->detach_control();
     session.reset();
     if (!lease_.empty())
         registry_.release(lease_);
@@ -262,6 +327,9 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     if (!has_session())
         return Reply::failure("not_connected", "Open a device session first (or reopen after disconnect)");
     auto &s = *session_;
+    if (shared_control_ && (method == "recording.configure" || method == "media.finish" || method == "video.stop"))
+        return Reply::failure("exclusive_session_required",
+                              "Recording and explicit media shutdown require an exclusive session; close your shared association instead");
     if (method == "network.debug") {
         if (auto *stack = s.device.stack())
             stack->set_net_debug(p.value("enabled", false));
@@ -430,6 +498,8 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         return s.recorder ? Reply{} : fail(error);
     }
     if (method == "audio.start") {
+        if (shared_control_ && s.audio && s.audio_owner != shared_control_->attachment)
+            return Reply::failure("device_busy", "Audio already has a consumer in another mirror");
         if (!s.audio) {
             media::AudioPump::Options o;
             o.audio_dup = p.value("duplicate", false);
@@ -440,6 +510,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
             o.session_group = s.media_group;
             s.audio = media::AudioPump::start(s.device, o, error);
             s.pcm_started = false;
+            if (s.audio && shared_control_) s.audio_owner = shared_control_->attachment;
         }
         if (!s.audio)
             return fail(error);
@@ -450,10 +521,15 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         return r;
     }
     if (method == "audio.stop") {
+        if (shared_control_ && s.audio && s.audio_owner != shared_control_->attachment)
+            return Reply::failure("device_busy", "Audio belongs to another mirror");
         s.audio.reset();
+        s.audio_owner.clear();
         return {};
     }
     if (method == "audio.read") {
+        if (shared_control_ && s.audio && s.audio_owner != shared_control_->attachment)
+            return Reply::failure("device_busy", "Audio belongs to another mirror");
         if (!s.audio || !s.audio->decoding_enabled())
             return Reply::failure("invalid_state", "PCM audio is not running");
         size_t frames = bounded(p, "frames", 960, 1, 48000);
@@ -477,6 +553,15 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         return r;
     }
     if (method == "video.start") {
+        Json profile;
+        if (shared_control_) {
+            if (!p.value("decode", true) || !p.value("record_path", std::string()).empty())
+                return Reply::failure("exclusive_session_required", "Recording requires an exclusive session");
+            profile = {{"hardware_decode", p.value("hardware_decode", false)}, {"decode", true},
+                       {"restart_on_silence", p.value("restart_on_silence", true)}};
+            if (s.video && profile != s.video_profile)
+                return Reply::failure("media_conflict", "Shared video parameters differ from the running stream");
+        }
         if (!kHaveDecoder && p.value("decode", true))
             return Reply::failure("unsupported", "No HEVC decoder in this build");
         if (!s.video) {
@@ -499,6 +584,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
                 return FrameGeometry{g.width, g.height, g.orientation, g.seq};
             };
             s.video = media::FramePump::start(s.device, options, error);
+            if (s.video && shared_control_) s.video_profile = std::move(profile);
         }
         if (!s.video)
             return fail(error);
@@ -784,6 +870,48 @@ Reply Backend::handle_persistent_connection(const std::string &method, const Jso
     return result(connection, false);
 }
 
+Reply Backend::bind_shared(const std::shared_ptr<Session> &session, const std::string &mode,
+                           const std::shared_ptr<SharedControl> &attached) {
+    std::unique_lock media_lock(session->media_mutex);
+    std::lock_guard control_lock(session->control_mutex);
+    if (session->retired || !session->connection->alive())
+        return Reply::failure("not_connected", "Device session is no longer available");
+    if (!attached) {
+        const bool wifi = session->device.connection_type() == "WiFi";
+        if ((mode == "usb" && wifi) || (mode == "wifi" && !wifi))
+            return Reply::failure("invalid_state", "Active session uses a different transport");
+        if (session->control_clients && !session->shared_mode)
+            return Reply::failure("device_busy", "Device has an exclusive control owner");
+        std::string error;
+        auto key = attachment_key(error);
+        if (!key) return Reply::failure("operation_failed", error);
+        auto owner = std::make_shared<SharedControl>(session);
+        // Register only after generating the capability. The session lock must
+        // be released before any registered owner's destructor can run.
+        owner->attachment = std::move(*key);
+        session->shared_controls[owner->attachment] = owner.get();
+        try {
+            std::lock_guard lock(registry_.mutex);
+            registry_.shared_attachments[owner->attachment] = owner;
+        } catch (...) {
+            session->shared_controls.erase(owner->attachment);
+            throw;
+        }
+        session->shared_mode = true;
+        ++session->control_clients;
+        owner->registered = true;
+        shared_control_ = std::move(owner);
+    } else {
+        shared_control_ = attached;
+    }
+    session_ = session;
+    read_only_ = false;
+    Reply reply;
+    if (!attached) reply.result = {{"udid", session->udid},
+        {"attachment", shared_control_->attachment}, {"access", "shared"}};
+    return reply;
+}
+
 Reply Backend::bind_existing(const std::shared_ptr<Session> &session, bool read_only,
                              const std::string &mode, const std::string &key) {
     std::unique_lock media_lock(session->media_mutex);
@@ -831,11 +959,15 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
         if (session_) return Reply::failure("invalid_state", "This client already owns a session");
         auto key = p.at("attachment").get<std::string>();
         std::shared_ptr<Session> session;
+        std::shared_ptr<SharedControl> shared;
         {
             std::lock_guard lock(registry_.mutex);
             auto found = registry_.sessions.find(key);
             if (found != registry_.sessions.end()) session = std::static_pointer_cast<Session>(found->second.lock());
+            auto group = registry_.shared_attachments.find(key);
+            if (group != registry_.shared_attachments.end()) shared = std::static_pointer_cast<SharedControl>(group->second.lock());
         }
+        if (shared) return bind_shared(shared->session, "auto", shared);
         if (!session) return Reply::failure("invalid_session", "Session attachment is no longer available");
         return bind_existing(session, false, "auto", key);
     }
@@ -843,8 +975,10 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
         if (session_)
             return Reply::failure("invalid_state", "This client already owns a device session");
         const auto access = p.value("access", std::string("control"));
-        if (access != "read" && access != "control") return Reply::failure("invalid_params", "access must be read or control");
+        if (access != "read" && access != "control" && access != "shared")
+            return Reply::failure("invalid_params", "access must be read, control or shared");
         const bool read_only = access == "read";
+        const bool shared = access == "shared";
         auto udid = p.at("udid").get<std::string>();
         auto mode = p.value("transport", std::string("auto"));
         if (mode != "auto" && mode != "usb" && mode != "wifi")
@@ -880,9 +1014,11 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             return found == registry_.device_sessions.end() ? std::shared_ptr<Session>()
                 : std::static_pointer_cast<Session>(found->second.lock());
         };
-        if (auto session = existing()) return bind_existing(session, read_only, mode);
+        if (auto session = existing())
+            return shared ? bind_shared(session, mode) : bind_existing(session, read_only, mode);
         if (!registry_.acquire(udid, true)) {
-            if (auto session = existing()) return bind_existing(session, read_only, mode);
+            if (auto session = existing())
+                return shared ? bind_shared(session, mode) : bind_existing(session, read_only, mode);
             return Reply::failure("device_busy", "Device is already in use");
         }
         lease_ = udid;
@@ -919,11 +1055,11 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
                 close();
                 return Reply::failure("not_connected", "Device connection was lost; connect again");
             }
-            session_ = std::make_shared<Session>(registry_, std::move(connection), read_only);
-            read_only_ = read_only;
+            session_ = std::make_shared<Session>(registry_, std::move(connection), read_only || shared);
+            read_only_ = read_only || shared;
             lease_.clear();
             auto read_key = attachment_key(error);
-            auto control_key = read_only ? std::optional<std::string>(std::string()) : attachment_key(error);
+            auto control_key = read_only || shared ? std::optional<std::string>(std::string()) : attachment_key(error);
             if (!read_key || !control_key) { close(); return fail(error); }
             session_->read_attachment = std::move(*read_key);
             session_->attachment = std::move(*control_key);
@@ -932,7 +1068,7 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
                 std::lock_guard lock(registry_.mutex);
                 disconnected = session_->connection->closed;
                 if (!disconnected) {
-                    if (!read_only) registry_.sessions[session_->attachment] = session_;
+                    if (!read_only && !shared) registry_.sessions[session_->attachment] = session_;
                     registry_.sessions[session_->read_attachment] = session_;
                     registry_.device_sessions[udid] = session_;
                 }
@@ -944,6 +1080,11 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
         } catch (...) {
             close();
             throw;
+        }
+        if (shared) {
+            auto result = bind_shared(session_, mode);
+            if (!result.ok) close();
+            return result;
         }
         Reply r;
         r.result = {{"udid", session_->device.udid()},
@@ -966,6 +1107,8 @@ Reply Backend::handle_input(const std::string &method, const Json &p, const Canc
                 return Reply::failure("unsupported", "Only US keyboard ASCII text is supported");
         const int hold = bounded(p, "hold_ms", 0, 0, 1000);
         const int timeout = bounded(p, "timeout_ms", 30000, 1, 300000);
+        if (shared_control_ && !s.keys.empty())
+            return Reply::failure("input_busy", "Release held keyboard keys before typing text in a shared session");
         if (s.video)
             s.video->wake();
         const transport::IoBudget budget({std::chrono::milliseconds(timeout), cancel});
@@ -991,18 +1134,23 @@ Reply Backend::handle_input(const std::string &method, const Json &p, const Canc
         auto x = p.at("x").get<double>(), y = p.at("y").get<double>();
         if (!unit(x) || !unit(y))
             return Reply::failure("invalid_params", "Touch coordinates must be in [0,1]");
+        if (shared_control_ && s.touching && s.touch_owner != shared_control_->attachment)
+            return Reply::failure("input_busy", "Another mirror is holding the single touch contact");
         s.x = x;
         s.y = y;
         if (method == "input.tap") {
             s.touching = true;
+            if (shared_control_) s.touch_owner = shared_control_->attachment;
             const bool ok = s.hid->tap(x, y, bounded(p, "hold_ms", 30, 0, 2000), error);
             if (ok)
                 s.touching = false;
             return ok ? Reply{} : fail(error);
         }
         bool down = p.at("down").get<bool>();
-        if (down)
+        if (down) {
             s.touching = true;
+            if (shared_control_) s.touch_owner = shared_control_->attachment;
+        }
         const bool ok = s.hid->touch(hid::kSurfaceMainTouchscreen, x, y, down, error);
         if (ok)
             s.touching = down;
@@ -1013,6 +1161,13 @@ Reply Backend::handle_input(const std::string &method, const Json &p, const Canc
         for (auto key : usages)
             if (key >= 240)
                 return Reply::failure("invalid_params", "Keyboard usage must be below 240");
+        if (shared_control_) {
+            shared_control_->keys = {usages.begin(), usages.end()};
+            std::set<uint16_t> combined;
+            for (const auto &[key, owner] : s.shared_controls)
+                combined.insert(owner->keys.begin(), owner->keys.end());
+            usages.assign(combined.begin(), combined.end());
+        }
         s.keys = {usages.begin(), usages.end()};
         return s.hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report(usages), error)
                    ? Reply{}
@@ -1026,11 +1181,25 @@ Reply Backend::handle_input(const std::string &method, const Json &p, const Canc
             s.buttons = hid::Buttons::open(s.device, error);
         if (!s.buttons)
             return fail(error);
+        if (shared_control_) {
+            const auto button = std::pair{page, code};
+            if (down) {
+                shared_control_->buttons.insert(button);
+                if (s.held_buttons.contains(button)) return {};
+            } else {
+                if (!shared_control_->buttons.contains(button)) return {};
+                bool other_held = false;
+                for (const auto &[key, owner] : s.shared_controls)
+                    if (owner != shared_control_.get() && owner->buttons.contains(button)) other_held = true;
+                if (other_held) { shared_control_->buttons.erase(button); return {}; }
+            }
+        }
         if (down)
             s.held_buttons.insert({page, code});
         const bool ok = down ? s.buttons->down(page, code, error) : s.buttons->release(page, code, error);
         if (ok && !down)
             s.held_buttons.erase({page, code});
+        if (ok && !down && shared_control_) shared_control_->buttons.erase({page, code});
         return ok ? Reply{} : fail(error);
     }
     return Reply::failure("unknown_method", "Unknown method: " + method);

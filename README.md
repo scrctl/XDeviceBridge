@@ -155,8 +155,8 @@ require `-s UDID`. For IPv6 ports, use brackets: `xdb connect '[fe80::1%en0]:491
 The device port defaults to 49152; `--port` always selects the local Server port.
 Server keeps the idle tunnel after CLI/capture/media sessions exit, without
 starting media. `disconnect` invalidates its sessions but preserves pairing/DDI.
-Transport loss or Server exit also closes it, with no automatic reconnect. There
-is still one independent control session per device. Disconnect before pairing or
+Transport loss or Server exit also closes it, with no automatic reconnect. Default control access
+remains exclusive. Disconnect before pairing or
 DDI management.
 
 Development Servers advertising `read_only_sessions` support parallel screenshots
@@ -164,6 +164,11 @@ and queries while mirroring. The screenshot CLI uses read access automatically;
 reader exit preserves the mirror, and readers cannot change input/media state.
 Released Servers up to 1.2.0 retain their existing exclusive behavior. See the
 [API](docs/API.md#connectionopen).
+
+Development Servers also advertise `shared_control_sessions`: SDK clients may
+explicitly open `access:"shared"` to control the same phone from independent
+mirrors sharing one video producer. Exclusive access remains the default.
+Audio has one consumer; recording requires an exclusive session.
 
 `devices` prints one line per discovered or manually connected device; `devices -l` includes its name,
 addresses, network interfaces and pairing/connection details. `--json` retains the
@@ -225,7 +230,7 @@ raw requests. `rpc-shell` maintains a client session; it is not an iOS command s
 ## Initial scope and limitations
 
 - Discovery, USB/Wi-Fi pairing and DDI download/preparation.
-- One device session per client connection; a known UDID has one owning connection.
+- One device session per client connection; default control is exclusive, with capability-negotiated shared groups.
 - PNG screenshots; decoded latest-frame BGRA video with display geometry metadata.
 - Single-contact panel-normalized touch, keyboard usages, ASCII text, consumer keys and app control.
 - Binary media is framed separately from JSON, never Base64-encoded. Only one outstanding

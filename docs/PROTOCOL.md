@@ -136,8 +136,8 @@ record must exist. The default device RemotePairing port is 49152, distinct from
 the local Server port selected by CLI `--port`.
 
 Device sessions reuse manual connections; closing the last attachment releases
-media/input services and preserves the idle tunnel. There is still only one
-independent control session per device. `devices` merges manual connections and
+media/input services and preserves the idle tunnel. Default control access
+remains exclusive. `devices` merges manual connections and
 discovery by UDID; manual connections remain connected without an advertisement
 and include `manual_connection:{address,port}`. `disconnect` without selectors
 closes all manual connections; an endpoint and UDID together must both match.
@@ -157,6 +157,12 @@ capability, while readers may still capture screenshots. A later controller may
 acquire an unowned session. Older Servers may ignore unknown access fields, so
 check the capability. CLI screenshots negotiate it, retaining legacy behavior on
 older Servers. See the complete API contract.
+
+Shared control is separately negotiated with `shared_control_sessions` and
+`connection.open.access:"shared"`. Independent groups share one video producer,
+release only their own inputs on departure, and retain video until the last group
+leaves. Matching stream parameters are required; explicit media shutdown and
+recording remain exclusive. Audio has one consuming group. See API.md for details.
 
 ## Geometry and media ownership
 

@@ -44,7 +44,7 @@
 | 已通过 connection.close 脱离 | 可再次调用管理方法；open/attach 可建立新的关联 |
 | 已中断、传输失败或已销毁 | 丢弃客户端，使用新句柄重新连接 |
 
-同一 UDID 同时只允许一个独立控制拥有者；其控制 attachment 可以共享控制权。
+默认 control 模式下，同一 UDID 只允许一个独立控制拥有者；其 attachment 可以共享控制权。
 `connection.open` 指定 `access:"read"` 则可并行截图和查询，返回单独的只读 attachment。
 attachment 继承创建时的读／控制类型，不能把只读 attachment 附着成控制客户端。
 最后一个控制客户端退出时结束媒体并尝试释放输入，旧控制 attachment 失效；
@@ -65,6 +65,9 @@ attachment 继承创建时的读／控制类型，不能把只读 attachment 附
 | cancelled | 后端分发前检测到取消；断连期间的取消也可能表现为 EOF／无响应。 |
 | operation_failed | 设备、发现／连接、配对、DDI、编解码、录制或其他后端失败。message 说明本次原因，尚无稳定子错误码。 |
 | device_busy | 其他会话／操作持有设备租约，或手动连接阻止管理操作。先关闭会话／附着连接，或 disconnect 手动连接。 |
+| exclusive_session_required | 共享控制组请求录制或全局媒体关闭；使用独占会话，或关闭本组关联。 |
+| media_conflict | 共享视频的参数与当前生产者不一致；使用相同参数。 |
+| input_busy | 其他共享组正在使用单触点，或共享键盘仍有按住的键。 |
 | read_only_session | 当前设备关联为只读，拒绝输入、媒体配置、音频队列读取及管理修改；不是本机进程鉴权。 |
 | not_paired | connect 没有可用的本地 Wi-Fi 凭据；请先配对。 |
 | invalid_state | 当前连接或媒体状态不能执行该方法。修正调用顺序。 |
@@ -108,6 +111,7 @@ CLI 会在发送前检查此能力，缺失时明确提示升级 Server；旧版
 `capabilities.read_only_sessions:true` 表示当前开发版支持 `connection.open.access`。
 SDK 调用方须先检查此能力；1.2.0 及更早的 Server 会忽略未知字段，不能依赖它们执行只读限制。
 CLI 截图会探测此能力，旧服务端保留原有行为。
+`capabilities.shared_control_sessions:true` 另行表示支持下述显式 shared 控制组；公共 C ABI 与通信协议仍为 1。
 
 ### `server.stop`
 
@@ -163,8 +167,8 @@ pair-verify、TLS 隧道和 RSD 建连；仅找到本地记录不代表连接成
 也不会把现有连接迁移到该地址。
 
 调用方退出后基础连接由 Server 持有。设备会话复用它；最后一个附着客户端退出时
-释放媒体和 HID 服务，基础连接继续空闲保留，不主动采集媒体。同一设备仍只允许一个
-独立控制会话，第二个返回 `device_busy`。传输掉线、`disconnect` 或 Server 关闭时
+释放媒体和 HID 服务，基础连接继续空闲保留，不主动采集媒体。默认 control 接入仍独占；已有控制组时，
+另一个独占 open 返回 `device_busy`。传输掉线、`disconnect` 或 Server 关闭时
 使附着会话失效并关闭连接；不自动重连，重启后也不恢复。空闲 TCP keepalive 用于
 检测没有 FIN 的静默断网，检测时间受操作系统影响，不是固定的 RPC 截止时间。
 
@@ -292,9 +296,9 @@ auto／wifi 会复用所选 UDID 的已有手动 Wi-Fi 连接。UDID 为空时�
 | transport | 字符串 auto（默认）、usb、wifi |
 | wifi | 字符串；默认空；auto 或显式 RemotePairing 地址 |
 | port | 整数 1..65535；默认 49152，用于显式 Wi-Fi 地址 |
-| access | 字符串 control（默认）或 read；须先检查 read_only_sessions 能力 |
+| access | 字符串 control（默认）、read 或 shared；非默认模式须先检查对应能力 |
 
-当前连接不能已有关联会话。返回 `{udid:string,attachment:string,access:"control"|"read"}`。
+当前连接不能已有关联会话。返回 `{udid:string,attachment:string,access:"control"|"read"|"shared"}`。
 auto 模式下，wifi 为空时先尝试 USB，再尝试已配对 Wi-Fi；auto／地址选择无线路径。
 `transport:usb` 强制 USB；`transport:wifi` 且 wifi 为空时使用发现。
 显式 UDID 的连接失败通常返回 `operation_failed`；not_found／ambiguous 选择错误
@@ -309,12 +313,22 @@ read 模式可复用既有设备会话，不会建立第二路视频。支持 `d
 只读复用须与显式 transport 匹配。只读客户端关闭不会停止控制拥有者的媒体。
 这些约束针对当前关联，不能替代本机进程／用户鉴权；关闭关联后可重新请求控制权。
 
+shared 模式须先检查 `capabilities.shared_control_sessions:true`，旧 Server 可能忽略未知字段。
+多个显式 shared open 各有独立控制组和私密 attachment，共用设备、解码器及视频生产者；
+不能加入既有的独占控制会话，独占 open 也不能抢占已有共享组。
+相同 `video.start` 参数复用视频，解码方式或恢复参数冲突返回 `media_conflict`。
+共享组不支持录制、`video.stop` 或 `media.finish`，这些调用返回 `exclusive_session_required`；
+退出时关闭该组所有套接字，最后一组退出才结束视频。轮询／作业套接字 attach 到原组，
+不会成为新的独立组。退出一组会释放其输入；各组按键取并集，单触点占用冲突返回 `input_busy`。
+`input.text` 要求共享键盘没有按住的键。音频只允许一个控制组消费，其他组的音频请求返回
+`device_busy`；音频拥有者退出会停音频，但不会停止剩余组的视频，也不自动转移音频。
+
 ### `connection.attach`
 
 `attachment` 为**必填**字符串，取自活跃的 connection.open。
 当前连接不能已有关联会话。返回 `{}`，共享设备及会话，并继承该 attachment 的读／控制类型。
 `invalid_session` 表示已失效或未知；所有拥有者脱离后无法恢复。
-多个套接字并不允许同一设备具有多个独立拥有者。
+独占 control 模式仍只允许一个拥有者；shared attachment 仅延长其自身控制组的生命周期。
 
 ### `connection.close`
 
@@ -424,6 +438,8 @@ PNG 转 BGRA 时，编码输入和紧凑 BGRA 输出各不得超过 64 MiB；
 其他 format 字符串在启动截图前返回 invalid_params。
 
 ### `video.start`
+
+shared 模式只接受解码视频；相同参数复用生产者，冲突则拒绝，不会重启另一窗口的视频。
 
 | 参数 | 类型／默认值 |
 | --- | --- |

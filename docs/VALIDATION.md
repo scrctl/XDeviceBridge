@@ -638,3 +638,34 @@ no periodic rescan timer. Cold or empty discovery can still wait up to the
 requested budget. This round did not exercise physical Wi-Fi/network switching,
 daemon restart against a real provider, USB handoff, new phone pairing, or power
 consumption. Failure/retry behavior was covered with controlled providers.
+
+## Shared mirror control acceptance (2026-10-28)
+
+On Apple Silicon macOS with the existing iPhone14,4 / iOS 27.0.1 Wi-Fi pairing,
+two independent CoreDevice video negotiations did not sustain two live streams:
+the first froze after the second started, both over separate tunnels and over one
+shared tunnel. The phone was unlocked; saved Settings/Home frames confirmed real
+screen changes. In the separate-tunnel run the first serial stopped at 214 while
+the second advanced to 341; in the shared-tunnel run they were 194 and 328.
+The first did not resume within 2.5 seconds after closing the second. Automatic
+video restarts were disabled and closing the second skipped device-wide stopAll.
+These observations cover this device and negotiation path, not all iOS devices.
+
+The new capability-negotiated shared control groups instead reused one FramePump.
+Two independent opens and attached polling sockets received video; one group
+launched Settings and the other returned Home, with saved screenshots confirming
+the visible effects. Closing the first root socket retained its group while its
+auxiliary attachment remained; closing that attachment left the second group's
+video and input working. Conflicting video options, simultaneous single-touch
+ownership, shared global stop/record requests and exclusive/shared mixing were
+rejected. Read-only screenshot access remained available after the last control
+group left, while video stopped; legacy exclusive media.finish remained usable.
+
+Audio checks confirmed one consuming group: another group could neither consume
+nor stop it. Closing the non-owner preserved audio/video; closing the audio owner
+preserved the other group's video, and that group could explicitly start audio.
+Two real desktop scrctl windows then rendered 67 and 134 frames in staggered
+four/eight-second runs. Both renderer readbacks were saved, and a read-only poll
+confirmed advancing video after the first window exited, then stopped video after
+the last exited. These counts are functional evidence, not a performance benchmark.
+Original pairing records were unchanged; isolated test Servers were stopped.

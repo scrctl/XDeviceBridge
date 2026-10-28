@@ -47,7 +47,7 @@ local processes. Phone authentication is separate. Credentials stay in Server.
 | Detached by connection.close | Management methods available again; open/attach can create a new association |
 | Interrupted, transport failed, destroyed | Discard client; reconnect with a new handle |
 
-One UDID has one independent control owner; control attachments share that
+By default, one UDID has one independent control owner; control attachments share that
 ownership. `connection.open` with `access:"read"` allows parallel screenshots and
 queries, returning a separate read-only attachment. Attaching inherits its access
 and cannot turn a read-only capability into a control one. Closing the last
@@ -72,6 +72,9 @@ not a transaction mechanism for multiple control clients.
 | cancelled | Cancellation detected before backend dispatch; disconnect-time cancellation may instead give EOF/no response. |
 | operation_failed | Device, discovery/connection, pairing, DDI, codec, recording or other backend failure. Message explains this occurrence; no stable subcodes yet. |
 | device_busy | Device lease held by another session/operation, or a manual connection blocks management. Close sessions/attachments or disconnect the manual connection. |
+| exclusive_session_required | Shared group requested recording or global media shutdown; use an exclusive association or close this group instead. |
+| media_conflict | Shared video options differ from the current producer; use matching options. |
+| input_busy | Another shared group owns the single touch contact, or shared keyboard keys are held. |
 | read_only_session | The device association is read-only; rejects input, media configuration, consuming audio reads and management mutations. Not process authentication. |
 | not_paired | No usable local Wi-Fi record for connect. Pair first. |
 | invalid_state | Method not valid for current connection/media state; fix ordering. |
@@ -120,6 +123,7 @@ C ABI remain 1.
 current development source. SDK callers must check this first: released Servers
 up to 1.2.0 ignore unknown fields and cannot enforce the read role. The screenshot
 CLI probes the capability and retains legacy behavior on older Servers.
+`capabilities.shared_control_sessions:true` separately advertises explicit shared control groups below. C ABI and wire protocol remain 1.
 
 ### `server.stop`
 
@@ -182,8 +186,8 @@ was requested. It does not move an established connection to a different address
 
 Server owns the base connection after the requesting socket exits. Device sessions
 reuse it; their media/HID services are released when the last attachment closes,
-while the base connection remains idle without starting media. Independent control
-sessions still return `device_busy`. Transport loss, `disconnect` or Server shutdown
+while the base connection remains idle without starting media. Default exclusive control
+opens still return `device_busy` when another control group is active. Transport loss, `disconnect` or Server shutdown
 invalidates attached sessions and closes the connection; no automatic reconnect or
 restart restoration occurs. Idle TCP keepalive detects silent transport loss;
 detection time depends on the operating system, not a fixed RPC deadline.
@@ -331,9 +335,9 @@ Explicit `usb` requires disconnecting that manual connection first.
 | transport | string auto (default), usb, wifi |
 | wifi | string; default empty; auto or explicit RemotePairing address |
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
-| access | string control (default) or read; check read_only_sessions capability first |
+| access | string control (default), read or shared; check the corresponding capability for non-default modes |
 
-No current session allowed. Result `{udid:string,attachment:string,access:"control"|"read"}`. Without a
+No current session allowed. Result `{udid:string,attachment:string,access:"control"|"read"|"shared"}`. Without a
 manual connection, auto mode with empty wifi tries USB then paired Wi-Fi; wifi
 auto/address chooses the wireless path. `transport:usb` forces USB.
 `transport:wifi` with empty wifi uses discovery only if no manual connection exists.
@@ -355,13 +359,29 @@ match when reusing a session. Reader close never stops a controller's media.
 These constraints apply to the association, not to local process/OS-user identity;
 a client may close the association and request control again.
 
+Shared mode requires `capabilities.shared_control_sessions:true`; older Servers
+may ignore unknown fields. Each explicit shared open creates an independent
+control group and private attachment, sharing the device, decoder and video
+producer. It cannot join an existing exclusive controller; exclusive open cannot
+preempt shared groups. Matching `video.start` options reuse the producer; decoder
+or recovery-option mismatches return `media_conflict`.
+Shared groups cannot record, call `video.stop`, or call `media.finish`
+(`exclusive_session_required`). Close all sockets in a group to leave; only the
+last control group stops video. Attached poll/job sockets belong to their original
+group. Departure releases that group's input: keyboard usages/buttons are merged,
+while the single touch contact returns `input_busy` when another group holds it.
+`input.text` requires no held shared keyboard keys. Only one group may consume
+audio; other groups' audio requests return `device_busy`. Audio stops when its
+owner leaves, without stopping the remaining video or automatically transferring
+audio ownership.
+
 ### `connection.attach`
 
 Param `attachment`: string **required**, from a live connection.open. No current
 session allowed. Result `{}`. Shares the device/session and inherits the
 attachment's read or control role.
 Failure `invalid_session` means it expired or is unknown; no resume after all
-owners detach. Multiple sockets do not allow multiple owners of one device.
+owners detach. Exclusive control still has one owner; shared attachments extend only their own control group.
 
 ### `connection.close`
 
@@ -479,6 +499,9 @@ change gives `geometry_changed` and discards that capture. No audio/video pump i
 required. Other format strings return invalid_params before initiating capture.
 
 ### `video.start`
+
+Shared mode accepts decoded video only. Matching parameters reuse the producer;
+conflicts are rejected without restarting another window's video.
 
 | Param | Type / default |
 | --- | --- |

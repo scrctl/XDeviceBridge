@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add capability-negotiated `access: "shared"` control groups. Independent mirrors
+  share one video producer, retain separate attachment/input lifetimes and reject
+  conflicting media options. Legacy control access remains exclusive. Audio has
+  one consuming group; recording remains exclusive.
+
 - Add `connection.open` with `access: "read"` for screenshots and read-only
   queries alongside an existing controller. Scope attachments to their access,
   preserve media when readers close, and stop media/release held inputs when the

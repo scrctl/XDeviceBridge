@@ -27,6 +27,7 @@ struct Registry {
     std::mutex mutex;
     std::set<std::string> devices;
     std::map<std::string, std::weak_ptr<void>> sessions;
+    std::map<std::string, std::weak_ptr<void>> shared_attachments;
     std::map<std::string, std::weak_ptr<void>> device_sessions;
     std::map<std::string, std::shared_ptr<DeviceConnection>> connections;
     bool acquire(const std::string &udid, bool use_connection = false);
@@ -60,15 +61,19 @@ class Backend {
 
   private:
     struct Session;
+    struct SharedControl;
     Registry &registry_;
     std::string directory_, lease_;
     std::shared_ptr<Session> session_;
+    std::shared_ptr<SharedControl> shared_control_;
     bool read_only_ = false;
     void close();
     Reply handle_management(const std::string &, const Json &, const Event &, const Cancel &);
     static void disconnect_connection(Registry &, const std::shared_ptr<DeviceConnection> &);
     Reply handle_persistent_connection(const std::string &, const Json &, const Cancel &);
     Reply bind_existing(const std::shared_ptr<Session> &, bool, const std::string &, const std::string & = {});
+    Reply bind_shared(const std::shared_ptr<Session> &, const std::string &,
+                      const std::shared_ptr<SharedControl> & = {});
     Reply handle_connection(const std::string &, const Json &, const Cancel &);
     Reply handle_input(const std::string &, const Json &, const Cancel &, Session &);
 };

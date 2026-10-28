@@ -41,6 +41,7 @@ class FakeServer(socketserver.ThreadingTCPServer):
         self.clipboard = ''
         self.bad_frame = False
         self.no_video = False
+        self.shared_control = False
         self.thread = threading.Thread(target=self.serve_forever, daemon=True)
         self.thread.start()
 
@@ -70,11 +71,17 @@ class FakeServer(socketserver.ThreadingTCPServer):
         if name == 'hello':
             assert p == dict(protocol=1)
             return dict(protocol=1), b''
+        if name == 'server.info':
+            return dict(capabilities=dict(shared_control_sessions=self.shared_control)), b''
         if name == 'devices':
             return dict(devices=[dict(name='Test iPhone', udid='mock-iphone', candidates=[dict(transport='wifi', address='127.0.0.2', port=49152, paired=True)])], warnings=[], capabilities=dict(video_decode=True)), b''
         if name == 'connection.open':
             assert p['udid'] in ('mock-iphone', '')
-            return dict(udid='mock-iphone', attachment='test-attachment'), b''
+            result = dict(udid='mock-iphone', attachment='test-attachment')
+            if p.get('access') == 'shared':
+                assert self.shared_control
+                result['access'] = 'shared'
+            return result, b''
         if name == 'connection.attach':
             assert p['attachment'] == 'test-attachment'
         if name == 'device.info':

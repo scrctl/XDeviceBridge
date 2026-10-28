@@ -129,7 +129,7 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 默认手机 RemotePairing 端口为 49152，与 CLI `--port` 指定的本机 Server 端口无关。
 
 设备会话可复用手动连接，最后一个附着客户端关闭时释放媒体／输入服务，保留空闲隧道。
-同一设备仍只有一个独立控制会话。`devices` 按 UDID 合并发现与手动连接，后者在没有
+默认 control 接入仍独占。`devices` 按 UDID 合并发现与手动连接，后者在没有
 广播时也列为 connected，附 `manual_connection:{address,port}`。
 `disconnect` 不带筛选条件时关闭全部手动连接；指定端点与 UDID 时都必须匹配。
 传输掉线或关闭 Server 也会关闭手动连接，不自动重连、不持久化连接地址。
@@ -145,6 +145,10 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 最后一个控制客户端退出后媒体结束、控制 attachment 失效；读取客户端仍可截图，
 新控制客户端可在没有拥有者时取得控制权。旧版 Server 可能忽略未知 access 字段，
 调用方必须检查能力；CLI 截图自动协商，旧 Server 保留原行为。详见完整 API 契约。
+
+共享控制另行通过 `shared_control_sessions` 能力及 `connection.open.access:"shared"` 协商。
+独立控制组共用一条视频，各组退出仅释放自身输入，最后一组退出才停止视频。
+视频参数必须一致；显式媒体关闭和录制保持独占，音频只有一个消费组。完整规则见 API_zh.md。
 
 ## 几何与媒体所有权
 

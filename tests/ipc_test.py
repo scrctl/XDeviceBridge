@@ -92,6 +92,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert info['capabilities']['pairing_display_brand'] is True
             assert info['capabilities']['manual_connections'] is True
             assert info['capabilities']['read_only_sessions'] is True
+            assert info['capabilities']['shared_control_sessions'] is True
             assert client.xdb_client_server_version(c).decode() == info['version']
             unknown = request(c,'future.optional.method')
             assert not unknown['ok'] and unknown['error']['code']=='not_connected'
