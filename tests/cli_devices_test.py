@@ -30,11 +30,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     ddi_error = False
     branding_supported = True
     manual_connected = False
+    manual_supported = True
 
     def handle(name, params):
         global manual_connected
         if name == 'server.info':
-            return dict(capabilities=dict(pairing_display_brand=branding_supported)), b''
+            return dict(capabilities=dict(pairing_display_brand=branding_supported, manual_connections=manual_supported)), b''
         if name in ('connect', 'disconnect'):
             with server.lock:
                 server.calls.append((name, params))
@@ -122,6 +123,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert server.calls[-1] == ('disconnect', dict(udid='selected'))
     run('disconnect')
     assert server.calls[-1] == ('disconnect', {})
+    manual_supported = False
+    before_connect = sum(name in ('connect', 'disconnect') for name, _ in server.calls)
+    for args in (('connect', '10.0.0.7'), ('disconnect',)):
+        assert 'upgrade xdb Server' in run(*args, ok=False).stderr
+    assert sum(name in ('connect', 'disconnect') for name, _ in server.calls) == before_connect
+    manual_supported = True
     run('pair', '--display-brand', 'scrctl')
     assert any(name == 'pair' and p['display_brand'] == 'scrctl' for name, p in server.calls)
     branding_supported = False
@@ -164,6 +171,14 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert any(name == 'devices' and p['transport'] == 'wifi' for name, p in server.calls)
     assert any(name == 'connection.open' and p['udid'] == 'mock-iphone' and p['transport'] == 'wifi'
                for name, p in server.calls)
+    # A known manual connection takes precedence over unrelated LAN discovery.
+    devices[0]['manual_connection'] = dict(address='10.0.0.7', port=49152)
+    devices[0]['state'] = 'connected'
+    devices.append(dict(udid='', name='', state='discovered', candidates=[]))
+    run('screenshot', target)
+    devices.pop()
+    devices[0].pop('manual_connection')
+    devices[0]['state'] = 'paired'
     run('ddi', 'prepare', '--wifi')
     assert any(name == 'ddi.prepare' and p['udid'] == 'mock-iphone' for name, p in server.calls)
     before_ddi = len(server.calls)

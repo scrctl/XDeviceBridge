@@ -329,6 +329,11 @@ int main(int argc, char **argv) {
         if (!serial.empty())
             params["udid"] = serial;
         if (args[0] == "connect" || args[0] == "disconnect") {
+            const auto info = request("server.info", Json::object(), false);
+            if (!info.value("ok", false) ||
+                !info.value("result", Json::object()).value("capabilities", Json::object())
+                     .value("manual_connections", false))
+                throw std::runtime_error("This server does not support connect/disconnect; upgrade xdb Server");
             if (endpoint) {
                 params["address"] = endpoint->address;
                 params["port"] = endpoint->port;
@@ -365,7 +370,7 @@ int main(int argc, char **argv) {
                 return 1;
             if (found["result"].value("cancelled", false))
                 throw std::runtime_error("Device discovery was cancelled");
-            std::set<std::string> identifiers;
+            std::set<std::string> identifiers, manual;
             bool unidentified = false;
             for (const auto &device : found["result"]["devices"]) {
                 if (wifi && wifi_address != "auto") {
@@ -379,8 +384,15 @@ int main(int argc, char **argv) {
                 auto id = device.value("udid", std::string());
                 if (id.empty())
                     unidentified = true;
-                else
+                else {
                     identifiers.insert(id);
+                    if (args[0] == "screenshot" && !usb && device.contains("manual_connection") &&
+                        device.value("state", std::string()) == "connected") manual.insert(id);
+                }
+            }
+            if (!manual.empty()) {
+                identifiers = std::move(manual);
+                unidentified = false;
             }
             if (identifiers.empty())
                 throw std::invalid_argument(unidentified ? "Discovered device has no known UDID; pair it first"

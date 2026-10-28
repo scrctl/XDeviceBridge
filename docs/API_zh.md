@@ -101,7 +101,7 @@
 缺少此能力字段时按不支持处理；旧服务端可能忽略未知请求字段。
 
 `capabilities.manual_connections:true` 表示支持 1.2 新增的 `connect`／`disconnect`。
-旧服务端可能返回 `unknown_method`；通信协议和 C ABI 仍为 1。
+CLI 会在发送前检查此能力，缺失时明确提示升级 Server；旧版未实现这些方法。通信协议和 C ABI 仍为 1。
 
 ### `server.stop`
 

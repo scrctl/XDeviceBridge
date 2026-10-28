@@ -108,8 +108,9 @@ not replace wire protocol negotiation or prove a device is connected.
 Treat an absent capability as unsupported; older servers may ignore unknown fields.
 
 `capabilities.manual_connections:true` advertises the `connect` / `disconnect`
-methods added in 1.2. Older servers may return `unknown_method`; protocol and C ABI
-remain 1.
+methods added in 1.2. The CLI checks this capability first and asks for a Server
+upgrade when absent; older servers do not implement these methods. Protocol and
+C ABI remain 1.
 
 ### `server.stop`
 

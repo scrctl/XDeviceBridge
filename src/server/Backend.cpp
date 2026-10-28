@@ -759,6 +759,7 @@ Reply Backend::handle_persistent_connection(const std::string &method, const Jso
     if (!connection->alive()) return Reply::failure("not_connected", "Device disconnected during authentication");
     {
         std::lock_guard lock(registry_.mutex);
+        if (cancel()) return Reply::failure("cancelled", "Connection request cancelled");
         registry_.connections.emplace(record->udid, connection);
     }
     return result(connection, false);
