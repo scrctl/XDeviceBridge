@@ -146,6 +146,16 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             s.sendall(packet({'id':2,'method':'server.info','params':{}}))
             value,binary=receive(s)
             assert value['id']==2 and value['ok'] and binary==b''
+        # Completion and peer EOF can race with the disconnect monitor sleeping.
+        # Repeated early closes must not deadlock cleanup or poison later peers.
+        for _ in range(8):
+            with socket.create_connection(('127.0.0.1',port),timeout=2) as s:
+                hello(s)
+                s.sendall(packet({'id':2,'method':'server.info','params':{}}))
+        with socket.create_connection(('127.0.0.1',port),timeout=2) as s:
+            hello(s)
+            s.sendall(packet({'id':2,'method':'server.info','params':{}}))
+            assert receive(s)[0]['ok'], 'request disconnect cleanup blocked later peers'
         for params in ({'protocol': 2}, {}):
             with socket.create_connection(('127.0.0.1',port),timeout=2) as s:
                 s.sendall(packet({'id':1,'method':'hello','params':params}))

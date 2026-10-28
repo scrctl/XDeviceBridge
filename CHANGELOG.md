@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Wake the request disconnect monitor immediately when an RPC completes, removing
+  an avoidable polling wait of up to 50 ms before replies. Preserve bounded EOF
+  detection and cancellation without changing the wire protocol or client API.
+
 - Add capability-negotiated `access: "shared"` control groups. Independent mirrors
   share one video producer, retain separate attachment/input lifetimes and reject
   conflicting media options. Legacy control access remains exclusive. Audio has

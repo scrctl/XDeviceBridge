@@ -669,3 +669,33 @@ four/eight-second runs. Both renderer readbacks were saved, and a read-only poll
 confirmed advancing video after the first window exited, then stopped video after
 the last exited. These counts are functional evidence, not a performance benchmark.
 Original pairing records were unchanged; isolated test Servers were stopped.
+
+## Single-window RPC latency (2026-10-28)
+
+The disconnect monitor's per-request socket poll could delay replies by about
+50 ms until its thread joined. An isolated, device-free run of 96 server.info
+requests averaged 23.67 ms, with 44 requests taking at least 40 ms. Waking an
+interruptible condition-variable wait at request completion reduced the same
+run to 0.20 ms average and 0.27 ms p95, with none reaching 40 ms. These are local
+measurements, not CI timing thresholds.
+
+On the existing iPhone14,4 / iOS 27.0.1 over Wi-Fi, the same scrctl executable,
+Metal renderer and 1136x2464 source delivered 105 rendered frames in a six-second
+single-window run before the fix and 253 after it (approximately 17 versus 42 fps).
+Separate three-second C-client probes of the old Server received 18.15 fps with
+exclusive access and 18.00 fps with shared access; the fixed Server's shared path
+received 41.45 fps. This isolates the measured RPC delay from shared-control
+bookkeeping; it does not establish a universal frame rate or prove a regression
+against every previously released frontend. No audio was routed in these runs,
+and no pairing or DDI state was changed.
+
+A software operation-response probe also issued app.launch for Settings from a
+settled Home screen while another attached socket received decoded frames. It
+classified a sampled interior-right image region (excluding the status bar and
+dock), rather than treating any new serial as a changed image. With five trials
+per build, median command-start to significant image change was 294.6 ms before
+and 255.9 ms after; recognition of the Settings scene was 539.8 and 483.4 ms.
+Samples varied with iOS launch/transition scheduling. These figures include that
+animation and end when the C client receives the frame; compositor and physical
+display scanout are excluded. They are not glass-to-glass video latency. Accurate
+screen-to-screen measurement still requires both displays in the same camera view.

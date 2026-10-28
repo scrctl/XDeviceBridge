@@ -5,6 +5,7 @@
 #include "xdb/xdb.h"
 #include "wifi/DiscoverySubscription.h"
 #include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -119,10 +120,17 @@ void xdb_server::run_client(Worker &worker) noexcept {
                 break;
             id = request["id"].get<uint64_t>();
             std::atomic<bool> disconnected{false};
+            std::mutex monitor_mutex;
+            std::condition_variable monitor_changed;
             // Detect EOF without consuming protocol bytes. Also cancels in-flight pairing/DDI.
             std::jthread monitor([&](std::stop_token stop) {
+                std::stop_callback wake(stop, [&] {
+                    std::lock_guard lock(monitor_mutex);
+                    monitor_changed.notify_all();
+                });
+                std::unique_lock lock(monitor_mutex);
                 while (!stop.stop_requested() && !stopping) {
-                    auto ready = transport::wait_socket(worker.socket.fd(), false, 50);
+                    auto ready = transport::wait_socket(worker.socket.fd(), false, 0);
                     if (ready < 0) {
                         disconnected = true;
                         break;
@@ -134,9 +142,11 @@ void xdb_server::run_client(Worker &worker) noexcept {
                             disconnected = true;
                             break;
                         }
-                        // Requests are sequential. Pending extra bytes must not create a busy loop.
-                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     }
+                    // Keep the disconnect polling budget, but let request completion
+                    // wake this wait immediately instead of delaying every reply.
+                    monitor_changed.wait_for(lock, std::chrono::milliseconds(50),
+                                             [&] { return stop.stop_requested() || stopping.load(); });
                 }
             });
             auto cancelled = [&] { return stopping.load() || disconnected.load(); };
