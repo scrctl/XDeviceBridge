@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add `connection.open` with `access: "read"` for screenshots and read-only
+  queries alongside an existing controller. Scope attachments to their access,
+  preserve media when readers close, and stop media/release held inputs when the
+  last control attachment closes. Readers can retain the device for screenshots;
+  a later controller can acquire it with a fresh capability.
+- The screenshot CLI negotiates read access when Server advertises
+  `capabilities.read_only_sessions`; older Servers retain their existing behavior.
+
 ## 1.2.0 — 2026-10-28
 
 - Add `xdb connect HOST[:PORT]` and `xdb disconnect [HOST[:PORT]]`. Authenticate

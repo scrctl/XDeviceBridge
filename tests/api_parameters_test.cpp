@@ -19,5 +19,9 @@ int main() {
     }
     if (recording_orientation("") || recording_orientation("unknown"))
         throw std::runtime_error("unknown orientation silently treated as portrait");
+    for (auto method : {"screenshot", "device.info", "display.info", "app.list", "clipboard.get", "video.frame", "media.status", "connection.close"})
+        if (!read_only_method(method)) throw std::runtime_error("read-only query rejected");
+    for (auto method : {"input.tap", "video.start", "video.stop", "audio.read", "recording.configure", "media.finish", "pair", "ddi.remove", "disconnect", "server.stop", "future.method"})
+        if (read_only_method(method)) throw std::runtime_error("mutation allowed in a read-only session");
     std::cout << "PASS: screenshot enum/type/default and recognized/unknown initial orientations\n";
 }

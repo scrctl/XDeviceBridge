@@ -74,6 +74,8 @@ constexpr CommandHelp commands[] = {
      "Save a lossless PNG screenshot to FILE on the client host.\n\n"
      "  --usb             Connect through USB only\n"
      "  --wifi [ADDRESS]  Use paired Wi-Fi discovery, or an explicit device address\n\n"
+     "With a supporting Server, capture can run alongside an existing mirror.\n"
+     "Read access never controls input or changes media. Older Servers remain exclusive.\n\n"
      "Prepare pairing and DDI before capture. Without a transport option,\n"
      "the device session reuses a manual connection, or prefers USB then paired Wi-Fi.\n"
      "A sole identified device is selected when -s is omitted.\n\n"

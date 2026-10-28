@@ -44,12 +44,13 @@
 | 已通过 connection.close 脱离 | 可再次调用管理方法；open/attach 可建立新的关联 |
 | 已中断、传输失败或已销毁 | 丢弃客户端，使用新句柄重新连接 |
 
-同一 UDID 同时只能有一个拥有者会话。其他套接字可通过私密的 `attachment` 字符串
-共享会话。再次打开相同 UDID 返回 `device_busy`。
-附着客户端具有相同控制权限，不是只读订阅者。
-会话持续到**最后一个**附着连接关闭；之后结束媒体、尝试释放按住的输入并释放设备租约。
-由手动 `connect` 保留的基础连接不随该清理关闭。若手机或传输已经失败，
-清理不能保证释放报告成功送达。
+同一 UDID 同时只允许一个独立控制拥有者；其控制 attachment 可以共享控制权。
+`connection.open` 指定 `access:"read"` 则可并行截图和查询，返回单独的只读 attachment。
+attachment 继承创建时的读／控制类型，不能把只读 attachment 附着成控制客户端。
+最后一个控制客户端退出时结束媒体并尝试释放输入，旧控制 attachment 失效；
+读取客户端可继续保留设备用于截图，后续控制客户端可重新取得控制租约。
+所有客户端都退出后释放设备会话；手动 `connect` 的基础连接仍可继续保留。
+传输失败时不能保证输入释放报告成功送达。
 
 附着连接共享媒体配置。应由一个控制客户端修改媒体状态，按需另设音频读取和视频轮询客户端。
 不要让多个音频客户端竞争读取：它们会消费同一个 PCM 队列。
@@ -64,6 +65,7 @@
 | cancelled | 后端分发前检测到取消；断连期间的取消也可能表现为 EOF／无响应。 |
 | operation_failed | 设备、发现／连接、配对、DDI、编解码、录制或其他后端失败。message 说明本次原因，尚无稳定子错误码。 |
 | device_busy | 其他会话／操作持有设备租约，或手动连接阻止管理操作。先关闭会话／附着连接，或 disconnect 手动连接。 |
+| read_only_session | 当前设备关联为只读，拒绝输入、媒体配置、音频队列读取及管理修改；不是本机进程鉴权。 |
 | not_paired | connect 没有可用的本地 Wi-Fi 凭据；请先配对。 |
 | invalid_state | 当前连接或媒体状态不能执行该方法。修正调用顺序。 |
 | invalid_session | attachment 已失效或未知。重新打开会话。 |
@@ -102,6 +104,10 @@
 
 `capabilities.manual_connections:true` 表示支持 1.2 新增的 `connect`／`disconnect`。
 CLI 会在发送前检查此能力，缺失时明确提示升级 Server；旧版未实现这些方法。通信协议和 C ABI 仍为 1。
+
+`capabilities.read_only_sessions:true` 表示当前开发版支持 `connection.open.access`。
+SDK 调用方须先检查此能力；1.2.0 及更早的 Server 会忽略未知字段，不能依赖它们执行只读限制。
+CLI 截图会探测此能力，旧服务端保留原有行为。
 
 ### `server.stop`
 
@@ -286,18 +292,27 @@ auto／wifi 会复用所选 UDID 的已有手动 Wi-Fi 连接。UDID 为空时�
 | transport | 字符串 auto（默认）、usb、wifi |
 | wifi | 字符串；默认空；auto 或显式 RemotePairing 地址 |
 | port | 整数 1..65535；默认 49152，用于显式 Wi-Fi 地址 |
+| access | 字符串 control（默认）或 read；须先检查 read_only_sessions 能力 |
 
-当前连接不能已有关联会话。返回 `{udid:string,attachment:string}`。
+当前连接不能已有关联会话。返回 `{udid:string,attachment:string,access:"control"|"read"}`。
 auto 模式下，wifi 为空时先尝试 USB，再尝试已配对 Wi-Fi；auto／地址选择无线路径。
 `transport:usb` 强制 USB；`transport:wifi` 且 wifi 为空时使用发现。
 显式 UDID 的连接失败通常返回 `operation_failed`；not_found／ambiguous 选择错误
 针对空 UDID 发现。连接准备共享 30 秒的有界预算，但调用方仍须管理取消。
 attachment 是活跃会话能力凭据，不是持久设备标识或设备凭据导出；应保密且不记录到日志。
 
+read 模式可复用既有设备会话，不会建立第二路视频。支持 `device.info`、`display.info`、
+`screenshot`、`app.list`、`clipboard.get`、`media.status`，以及读取已启动视频的 `video.frame`。
+不允许输入、媒体启停／录制配置、`audio.read`、配对／DDI／connect/disconnect 或 `server.stop`；
+`audio.read` 会消费共享队列，不能当成无副作用查询。
+没有既有会话时可单独创建只读会话；没有控制拥有者时，后续普通 open 可取得控制权。
+只读复用须与显式 transport 匹配。只读客户端关闭不会停止控制拥有者的媒体。
+这些约束针对当前关联，不能替代本机进程／用户鉴权；关闭关联后可重新请求控制权。
+
 ### `connection.attach`
 
 `attachment` 为**必填**字符串，取自活跃的 connection.open。
-当前连接不能已有关联会话。返回 `{}`，共享相同设备、会话和生产者状态。
+当前连接不能已有关联会话。返回 `{}`，共享设备及会话，并继承该 attachment 的读／控制类型。
 `invalid_session` 表示已失效或未知；所有拥有者脱离后无法恢复。
 多个套接字并不允许同一设备具有多个独立拥有者。
 
@@ -305,7 +320,7 @@ attachment 是活跃会话能力凭据，不是持久设备标识或设备凭据
 
 最后一个附着客户端退出后，手动连接的基础隧道仍空闲保留在 Server。
 无参数，返回 `{}`，可重复调用。只脱离**当前套接字**。
-其他附着连接可继续保持会话、媒体和按住的输入。
+其他控制附着连接可继续保持媒体和按住的输入；只读客户端不会延长控制媒体的生命周期。
 需要报告录制收尾错误时，应先调用 media.finish 再关闭；析构清理会丢弃错误。
 
 ### `device.info`

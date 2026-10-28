@@ -106,7 +106,7 @@ is a quick summary rather than the full method contract.
 | `ddi.prepare` | `udid`, optional `wifi`, `port`, `cache_directory`, `replace`, download/install timeout seconds | Prepared status; progress events |
 | `ddi.status` | `udid`, optional `wifi`, `port` | Mount state and evidence; independent installed DDI Cryptex metadata |
 | `ddi.remove` | `udid`, optional `wifi`, `port` | Verified absent state and whether this request removed the DDI |
-| `connection.open` | `udid`, optional `wifi`: auto/address, `port`: device port | Acquires a connection-owned session |
+| `connection.open` | `udid`, optional `wifi`, `port`, `access`: control/read | Control session or parallel read association; capability-negotiated |
 | `connection.close` | none | Releases services, inputs and device lease |
 | `device.info` | none | Device UDID, OS version, model |
 | `screenshot` | optional `format`: png/bgra (default png) | PNG body or decoded BGRA pixels, with display geometry |
@@ -145,6 +145,18 @@ Transport loss or Server shutdown closes them too, with no automatic reconnect
 or persisted endpoint. Idle TCP keepalive/actual I/O detects loss; detection time
 depends on the OS. Close stale sessions before explicit connect/open; old
 attachments are invalid. Disconnect manual connections before pairing or DDI management.
+
+### Parallel read associations (development source)
+
+When `server.info.capabilities.read_only_sessions` is true, `connection.open` may
+set `access:"read"`. Readers share the device and may read an existing video pump;
+they do not start another video stream. Read attachments inherit restrictions and
+cannot inject input, configure media, consume audio or perform global management
+mutations. Closing the last controller stops media and invalidates its control
+capability, while readers may still capture screenshots. A later controller may
+acquire an unowned session. Older Servers may ignore unknown access fields, so
+check the capability. CLI screenshots negotiate it, retaining legacy behavior on
+older Servers. See the complete API contract.
 
 ## Geometry and media ownership
 
@@ -202,8 +214,9 @@ must be explicit; the current implementation does not send HEVC/AAC payloads.
 `connection.open` accepts `transport` (`auto`, `usb`, `wifi`) and returns a random,
 connection-private `attachment` capability. A client may call
 `connection.attach` with it on another socket, allowing audio/video polling and
-control to proceed independently. Keep this capability private. The session and
-device lease live until its last attached connection closes. `connection.close`
+control to proceed independently. Keep this capability private. The device session and
+lease live until all clients close; media ownership lasts only while a control
+client or control attachment remains. `connection.close`
 only detaches the requesting client; it does not invalidate another attachment.
 
 - `display.info`: subscribes to display updates and returns panel geometry.

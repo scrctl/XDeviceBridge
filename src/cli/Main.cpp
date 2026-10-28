@@ -420,6 +420,10 @@ int main(int argc, char **argv) {
         if (args[0] == "screenshot" && args.size() == 2) {
             output = args[1];
             params["transport"] = usb ? "usb" : wifi ? "wifi" : "auto";
+            const auto info = request("server.info", Json::object(), false);
+            if (info.value("ok", false) && info.value("result", Json::object())
+                    .value("capabilities", Json::object()).value("read_only_sessions", false))
+                params["access"] = "read";
             if (!request("connection.open", params, false).value("ok", false))
                 return 1;
             return request("screenshot", Json::object()).value("ok", false) ? 0 : 1;

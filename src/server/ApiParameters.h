@@ -6,6 +6,12 @@
 #include <string_view>
 
 namespace xdb::server::detail {
+inline bool read_only_method(std::string_view method) {
+    return method == "server.info" || method == "devices" || method == "connection.close" ||
+           method == "connection.open" || method == "connection.attach" || method == "device.info" ||
+           method == "display.info" || method == "screenshot" || method == "app.list" ||
+           method == "clipboard.get" || method == "video.frame" || method == "media.status";
+}
 inline std::string screenshot_format(const nlohmann::json &params) {
     auto format = params.value("format", std::string("png"));
     if (format != "png" && format != "bgra")

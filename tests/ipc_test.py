@@ -91,6 +91,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert client.xdb_client_version().decode() == info['version']
             assert info['capabilities']['pairing_display_brand'] is True
             assert info['capabilities']['manual_connections'] is True
+            assert info['capabilities']['read_only_sessions'] is True
             assert client.xdb_client_server_version(c).decode() == info['version']
             unknown = request(c,'future.optional.method')
             assert not unknown['ok'] and unknown['error']['code']=='not_connected'
@@ -130,6 +131,9 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert not removed['ok'] and removed['error']['code']=='not_connected'
             assert not Path(data.decode()).exists(), 'removed endpoint wrote persistent state'
             assert not request(c,'connection.open',{'udid':'offline','transport':'invalid'})['ok']
+            for access in ('write', '', None, 1):
+                rejected = request(c, 'connection.open', {'udid': 'offline', 'access': access})
+                assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
             assert not request(c,'connection.attach',{'attachment':'invalid'})['ok']
             assert request(c,'connection.close')['ok']
             assert not request(c,'screenshot')['ok']

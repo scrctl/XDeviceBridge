@@ -47,12 +47,15 @@ local processes. Phone authentication is separate. Credentials stay in Server.
 | Detached by connection.close | Management methods available again; open/attach can create a new association |
 | Interrupted, transport failed, destroyed | Discard client; reconnect with a new handle |
 
-One UDID has one owning session at a time. Other sockets may share it via its
-private `attachment` string. Opening the same UDID again returns `device_busy`.
-An attached client has the same control rights; it is not a read-only subscriber.
-The session survives until the **last** attached connection closes. Then media
-is finalized, held input releases are attempted and the lease is freed. A manual `connect` base connection survives this session cleanup. Cleanup
-cannot promise successful releases if the phone/transport has already failed.
+One UDID has one independent control owner; control attachments share that
+ownership. `connection.open` with `access:"read"` allows parallel screenshots and
+queries, returning a separate read-only attachment. Attaching inherits its access
+and cannot turn a read-only capability into a control one. Closing the last
+control client finalizes media, attempts input release and invalidates the old
+control capability. Readers may retain the device for screenshots; a later
+controller can acquire it with a fresh capability. The device session is released
+when all clients leave; a manual `connect` base connection can survive that cleanup.
+Input releases cannot be guaranteed after transport failure.
 
 Media configuration is shared by attachments. Use one controller to change media
 state, a dedicated attached audio reader, and a separate video poller as needed.
@@ -69,6 +72,7 @@ not a transaction mechanism for multiple control clients.
 | cancelled | Cancellation detected before backend dispatch; disconnect-time cancellation may instead give EOF/no response. |
 | operation_failed | Device, discovery/connection, pairing, DDI, codec, recording or other backend failure. Message explains this occurrence; no stable subcodes yet. |
 | device_busy | Device lease held by another session/operation, or a manual connection blocks management. Close sessions/attachments or disconnect the manual connection. |
+| read_only_session | The device association is read-only; rejects input, media configuration, consuming audio reads and management mutations. Not process authentication. |
 | not_paired | No usable local Wi-Fi record for connect. Pair first. |
 | invalid_state | Method not valid for current connection/media state; fix ordering. |
 | invalid_session | Attachment no longer identifies a live session. Open a new one. |
@@ -111,6 +115,11 @@ Treat an absent capability as unsupported; older servers may ignore unknown fiel
 methods added in 1.2. The CLI checks this capability first and asks for a Server
 upgrade when absent; older servers do not implement these methods. Protocol and
 C ABI remain 1.
+
+`capabilities.read_only_sessions:true` advertises `connection.open.access` in the
+current development source. SDK callers must check this first: released Servers
+up to 1.2.0 ignore unknown fields and cannot enforce the read role. The screenshot
+CLI probes the capability and retains legacy behavior on older Servers.
 
 ### `server.stop`
 
@@ -322,8 +331,9 @@ Explicit `usb` requires disconnecting that manual connection first.
 | transport | string auto (default), usb, wifi |
 | wifi | string; default empty; auto or explicit RemotePairing address |
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
+| access | string control (default) or read; check read_only_sessions capability first |
 
-No current session allowed. Result `{udid:string,attachment:string}`. Without a
+No current session allowed. Result `{udid:string,attachment:string,access:"control"|"read"}`. Without a
 manual connection, auto mode with empty wifi tries USB then paired Wi-Fi; wifi
 auto/address chooses the wireless path. `transport:usb` forces USB.
 `transport:wifi` with empty wifi uses discovery only if no manual connection exists.
@@ -333,17 +343,31 @@ selection errors refer to empty-UDID discovery. Preparation shares a bounded
 Keep attachment private; do not log it. It is a live session capability, not a
 persistent device identifier and not a credential export.
 
+Read mode reuses an existing device session without starting a second video
+stream. It allows `device.info`, `display.info`, `screenshot`, `app.list`,
+`clipboard.get`, `media.status`, and `video.frame` from an already running pump.
+Input, media start/stop/recording configuration, `audio.read`, pairing/DDI,
+connect/disconnect and `server.stop` return `read_only_session`. Audio reads
+consume a shared queue and are not side-effect-free queries.
+Without an existing session, read mode can open a standalone one. A later normal
+open can acquire control when there is no control owner. Explicit transport must
+match when reusing a session. Reader close never stops a controller's media.
+These constraints apply to the association, not to local process/OS-user identity;
+a client may close the association and request control again.
+
 ### `connection.attach`
 
 Param `attachment`: string **required**, from a live connection.open. No current
-session allowed. Result `{}`. Shares the same device/session and producer state.
+session allowed. Result `{}`. Shares the device/session and inherits the
+attachment's read or control role.
 Failure `invalid_session` means it expired or is unknown; no resume after all
 owners detach. Multiple sockets do not allow multiple owners of one device.
 
 ### `connection.close`
 
-No params. Result `{}`; idempotent. Detaches **this socket**. Other attachments may
-keep the session, media and held input alive. After the last attachment closes,
+No params. Result `{}`; idempotent. Detaches **this socket**. Other control
+attachments may keep media and held input alive; readers do not extend that
+control-media lifetime. After the last attachment closes,
 a manual base connection remains idle in Server. To finish a recording with errors
 reported, call media.finish before closing; destructor cleanup discards errors.
 

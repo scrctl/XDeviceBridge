@@ -100,7 +100,7 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `ddi.prepare` | `udid`，可选 `wifi`、`port`、`cache_directory`、`replace`、下载／安装超时秒数 | 准备状态；进度事件 |
 | `ddi.status` | `udid`，可选 `wifi`、`port` | 挂载状态和证据；独立查询的 DDI Cryptex 安装信息 |
 | `ddi.remove` | `udid`，可选 `wifi`、`port` | 验证后的已移除状态，以及本次是否执行了移除 |
-| `connection.open` | `udid`，可选 `wifi`：auto/地址，`port`：设备端口 | 获取连接持有的会话 |
+| `connection.open` | `udid`，可选 `wifi`、`port`、`access`：control/read | 控制会话或并行只读关联，按能力协商 |
 | `connection.close` | 无 | 释放服务、输入和设备租约 |
 | `device.info` | 无 | 设备 UDID、系统版本、型号 |
 | `screenshot` | 可选 `format`：png/bgra（默认 png） | PNG 正文或解码后的 BGRA 像素，附显示几何 |
@@ -136,6 +136,15 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 传输掉线由空闲 TCP keepalive／实际 I/O 检测，检测耗时依操作系统而定。
 关闭失效会话后可以显式重新 connect/open；旧 attachment 不再有效。
 重新配对或管理 DDI 前须先断开手动连接。
+
+### 并行只读关联（当前开发版）
+
+`server.info.capabilities.read_only_sessions` 为 true 时，`connection.open` 可指定
+`access:"read"`。读取客户端共享设备及既有视频的读取能力，不启动第二路视频。
+只读 attachment 继承限制，不允许输入、媒体配置、消耗音频队列或全局管理修改。
+最后一个控制客户端退出后媒体结束、控制 attachment 失效；读取客户端仍可截图，
+新控制客户端可在没有拥有者时取得控制权。旧版 Server 可能忽略未知 access 字段，
+调用方必须检查能力；CLI 截图自动协商，旧 Server 保留原行为。详见完整 API 契约。
 
 ## 几何与媒体所有权
 

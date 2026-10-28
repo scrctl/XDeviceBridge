@@ -31,11 +31,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     branding_supported = True
     manual_connected = False
     manual_supported = True
+    read_only_supported = True
 
     def handle(name, params):
         global manual_connected
         if name == 'server.info':
-            return dict(capabilities=dict(pairing_display_brand=branding_supported, manual_connections=manual_supported)), b''
+            return dict(capabilities=dict(pairing_display_brand=branding_supported, manual_connections=manual_supported, read_only_sessions=read_only_supported)), b''
         if name in ('connect', 'disconnect'):
             with server.lock:
                 server.calls.append((name, params))
@@ -168,6 +169,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     target = str(Path(tmp) / 'screen.png')
     run('screenshot', target, '--wifi')
     assert Path(target).read_bytes().startswith(b'\x89PNG')
+    assert any(name == 'connection.open' and p.get('access') == 'read' for name, p in server.calls)
+    read_only_supported = False
+    start = len(server.calls)
+    run('screenshot', target, '--wifi')
+    assert any(name == 'connection.open' and 'access' not in p for name, p in server.calls[start:])
+    read_only_supported = True
     assert any(name == 'devices' and p['transport'] == 'wifi' for name, p in server.calls)
     assert any(name == 'connection.open' and p['udid'] == 'mock-iphone' and p['transport'] == 'wifi'
                for name, p in server.calls)

@@ -159,6 +159,12 @@ Transport loss or Server exit also closes it, with no automatic reconnect. There
 is still one independent control session per device. Disconnect before pairing or
 DDI management.
 
+Development Servers advertising `read_only_sessions` support parallel screenshots
+and queries while mirroring. The screenshot CLI uses read access automatically;
+reader exit preserves the mirror, and readers cannot change input/media state.
+Released Servers up to 1.2.0 retain their existing exclusive behavior. See the
+[API](docs/API.md#connectionopen).
+
 `devices` prints one line per discovered or manually connected device; `devices -l` includes its name,
 addresses, network interfaces and pairing/connection details. `--json` retains the
 complete structured response. Empty names and endpoint fields are omitted from

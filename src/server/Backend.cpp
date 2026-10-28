@@ -45,6 +45,14 @@ std::vector<wifi::PairRecord> records(const std::string &dir, const Cancel &canc
     bool stopped = false;
     return remote::detail::load_discovery_records(dir, cancel, warnings, stopped);
 }
+std::optional<std::string> attachment_key(std::string &error) {
+    auto bytes = wifi::random_bytes(32, error);
+    if (!bytes) return std::nullopt;
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string key;
+    for (auto byte : *bytes) { key += hex[byte >> 4]; key += hex[byte & 15]; }
+    return key;
+}
 bool unit(double n) { return std::isfinite(n) && n >= 0 && n <= 1; }
 } // namespace
 std::optional<remote::Device> open_device(const std::string &udid, const std::string &wifi_address,
@@ -115,7 +123,8 @@ bool Registry::acquire(const std::string &udid, bool use_connection) {
 struct Backend::Session {
     // Reverse destruction keeps all services/worker references inside Device's lifetime.
     Registry &registry;
-    std::string udid, attachment;
+    std::string udid, attachment, read_attachment;
+    unsigned control_clients;
     std::shared_mutex media_mutex;
     std::mutex control_mutex, pcm_mutex;
     bool pcm_started = false;
@@ -133,8 +142,9 @@ struct Backend::Session {
     std::set<std::pair<uint16_t, uint16_t>> held_buttons;
     bool touching = false;
     double x = 0, y = 0;
-    Session(Registry &r, std::shared_ptr<DeviceConnection> value)
-        : registry(r), udid(value->device.udid()), connection(std::move(value)), device(connection->device) {}
+    Session(Registry &r, std::shared_ptr<DeviceConnection> value, bool read_only)
+        : registry(r), udid(value->device.udid()), control_clients(read_only ? 0 : 1),
+          connection(std::move(value)), device(connection->device) {}
     bool finish(std::string &error) {
         if (audio)
             audio->stop_receiving();
@@ -151,26 +161,47 @@ struct Backend::Session {
         recorder.reset();
         return ok;
     }
+    void release_inputs() {
+        std::string ignored;
+        if (hid && !connection->closed) {
+            if (touching) hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
+            hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report({}), ignored);
+        }
+        if (buttons && !connection->closed)
+            for (auto [page, code] : held_buttons) buttons->release(page, code, ignored);
+        touching = false;
+        keys.clear();
+        held_buttons.clear();
+        buttons.reset();
+        hid.reset();
+    }
+    void detach_control() {
+        std::unique_lock media_lock(media_mutex);
+        std::lock_guard control_lock(control_mutex);
+        if (retired || control_clients == 0 || --control_clients != 0) return;
+        std::string ignored;
+        finish(ignored);
+        release_inputs();
+        // Readers may retain the Device for screenshots, but not its old media
+        // ownership or a capability that could revive a departed controller.
+        std::lock_guard lock(registry.mutex);
+        registry.sessions.erase(attachment);
+        attachment.clear();
+    }
     void shutdown() {
         std::unique_lock media_lock(media_mutex);
         std::lock_guard control_lock(control_mutex);
         if (retired) return;
         retired = true;
+        control_clients = 0;
         std::string ignored;
         finish(ignored);
-        if (hid && !connection->closed) {
-            if (touching)
-                hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
-            hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report({}), ignored);
-        }
-        if (buttons && !connection->closed)
-            for (auto [page, code] : held_buttons)
-                buttons->release(page, code, ignored);
-        buttons.reset();
-        hid.reset();
+        release_inputs();
         display.reset();
         std::lock_guard lock(registry.mutex);
         registry.sessions.erase(attachment);
+        registry.sessions.erase(read_attachment);
+        registry.device_sessions.erase(udid);
         registry.devices.erase(udid);
     }
     ~Session() { shutdown(); }
@@ -185,7 +216,7 @@ void Backend::disconnect_connection(Registry &registry, const std::shared_ptr<De
         const auto found = registry.connections.find(connection->device.udid());
         if (found != registry.connections.end() && found->second == connection)
             registry.connections.erase(found);
-        for (const auto &[key, weak] : registry.sessions)
+        for (const auto &[key, weak] : registry.device_sessions)
             if (auto session = std::static_pointer_cast<Session>(weak.lock());
                 session && session->connection == connection) sessions.push_back(std::move(session));
     }
@@ -203,7 +234,10 @@ void Backend::maintain_connections(Registry &registry, bool stop_all) {
 Backend::Backend(Registry &r, std::string dir) : registry_(r), directory_(std::move(dir)) {}
 Backend::~Backend() { close(); }
 void Backend::close() {
-    session_.reset();
+    auto session = std::move(session_);
+    const bool was_read_only = std::exchange(read_only_, false);
+    if (session && !was_read_only) session->detach_control();
+    session.reset();
     if (!lease_.empty())
         registry_.release(lease_);
     lease_.clear();
@@ -213,6 +247,8 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     std::string error;
     if (cancel())
         return Reply::failure("cancelled", "Request cancelled");
+    if (read_only_ && !detail::read_only_method(method))
+        return Reply::failure("read_only_session", "This session only permits screenshots and read-only queries");
     if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare" ||
         method == "ddi.status" || method == "ddi.remove")
         return handle_management(method, p, event, cancel);
@@ -551,7 +587,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
             std::lock_guard lock(registry_.mutex);
             for (const auto &[id, connection] : registry_.connections)
                 if (connection->alive()) connections.push_back(connection);
-            for (const auto &[key, weak] : registry_.sessions) {
+            for (const auto &[key, weak] : registry_.device_sessions) {
                 if (auto session = std::static_pointer_cast<Session>(weak.lock()))
                     sessions.push_back(std::move(session));
             }
@@ -748,6 +784,42 @@ Reply Backend::handle_persistent_connection(const std::string &method, const Jso
     return result(connection, false);
 }
 
+Reply Backend::bind_existing(const std::shared_ptr<Session> &session, bool read_only,
+                             const std::string &mode, const std::string &key) {
+    std::unique_lock media_lock(session->media_mutex);
+    std::lock_guard control_lock(session->control_mutex);
+    if (session->retired || !session->connection->alive())
+        return Reply::failure("not_connected", "Device session is no longer available");
+    if (!key.empty()) {
+        read_only = key == session->read_attachment;
+        if (!read_only && (key != session->attachment || session->control_clients == 0))
+            return Reply::failure("invalid_session", "Session attachment is no longer available");
+        if (!read_only) ++session->control_clients;
+    } else {
+        const bool wifi = session->device.connection_type() == "WiFi";
+        if ((mode == "usb" && wifi) || (mode == "wifi" && !wifi))
+            return Reply::failure("invalid_state", "Active session uses a different transport");
+        if (!read_only) {
+            if (session->control_clients)
+                return Reply::failure("device_busy", "Device already has a control owner; use access: read for queries");
+            std::string error;
+            auto fresh = attachment_key(error);
+            if (!fresh) return Reply::failure("operation_failed", error);
+            session->attachment = std::move(*fresh);
+            std::lock_guard lock(registry_.mutex);
+            registry_.sessions[session->attachment] = session;
+            session->control_clients = 1;
+        }
+    }
+    session_ = session;
+    read_only_ = read_only;
+    Reply reply;
+    if (key.empty()) reply.result = {{"udid", session->udid},
+        {"attachment", read_only ? session->read_attachment : session->attachment},
+        {"access", read_only ? "read" : "control"}};
+    return reply;
+}
+
 Reply Backend::handle_connection(const std::string &method, const Json &p, const Cancel &cancel) {
     auto fail = [](const std::string &error) { return Reply::failure("operation_failed", error); };
     std::string error;
@@ -756,24 +828,23 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
         return {};
     }
     if (method == "connection.attach") {
-        if (session_)
-            return Reply::failure("invalid_state", "This client already owns a session");
+        if (session_) return Reply::failure("invalid_state", "This client already owns a session");
         auto key = p.at("attachment").get<std::string>();
+        std::shared_ptr<Session> session;
         {
             std::lock_guard lock(registry_.mutex);
             auto found = registry_.sessions.find(key);
-            if (found != registry_.sessions.end())
-                session_ = std::static_pointer_cast<Session>(found->second.lock());
+            if (found != registry_.sessions.end()) session = std::static_pointer_cast<Session>(found->second.lock());
         }
-        if (!has_session()) {
-            session_.reset();
-            return Reply::failure("invalid_session", "Session attachment is no longer available");
-        }
-        return {};
+        if (!session) return Reply::failure("invalid_session", "Session attachment is no longer available");
+        return bind_existing(session, false, "auto", key);
     }
     if (method == "connection.open") {
         if (session_)
             return Reply::failure("invalid_state", "This client already owns a device session");
+        const auto access = p.value("access", std::string("control"));
+        if (access != "read" && access != "control") return Reply::failure("invalid_params", "access must be read or control");
+        const bool read_only = access == "read";
         auto udid = p.at("udid").get<std::string>();
         auto mode = p.value("transport", std::string("auto"));
         if (mode != "auto" && mode != "usb" && mode != "wifi")
@@ -803,8 +874,17 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             if (udid.empty())
                 return Reply::failure("device_not_found", "No identified device available");
         }
-        if (!registry_.acquire(udid, true))
+        const auto existing = [&]() {
+            std::lock_guard lock(registry_.mutex);
+            const auto found = registry_.device_sessions.find(udid);
+            return found == registry_.device_sessions.end() ? std::shared_ptr<Session>()
+                : std::static_pointer_cast<Session>(found->second.lock());
+        };
+        if (auto session = existing()) return bind_existing(session, read_only, mode);
+        if (!registry_.acquire(udid, true)) {
+            if (auto session = existing()) return bind_existing(session, read_only, mode);
             return Reply::failure("device_busy", "Device is already in use");
+        }
         lease_ = udid;
         try {
             std::shared_ptr<DeviceConnection> connection;
@@ -839,23 +919,23 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
                 close();
                 return Reply::failure("not_connected", "Device connection was lost; connect again");
             }
-            session_ = std::make_shared<Session>(registry_, std::move(connection));
-            lease_.clear(); // Session releases the device only after its last attachment closes.
-            auto key = wifi::random_bytes(32, error);
-            if (!key) {
-                close();
-                return fail(error);
-            }
-            static constexpr char hex[] = "0123456789abcdef";
-            for (auto byte : *key) {
-                session_->attachment += hex[byte >> 4];
-                session_->attachment += hex[byte & 15];
-            }
+            session_ = std::make_shared<Session>(registry_, std::move(connection), read_only);
+            read_only_ = read_only;
+            lease_.clear();
+            auto read_key = attachment_key(error);
+            auto control_key = read_only ? std::optional<std::string>(std::string()) : attachment_key(error);
+            if (!read_key || !control_key) { close(); return fail(error); }
+            session_->read_attachment = std::move(*read_key);
+            session_->attachment = std::move(*control_key);
             bool disconnected;
             {
                 std::lock_guard lock(registry_.mutex);
                 disconnected = session_->connection->closed;
-                if (!disconnected) registry_.sessions[session_->attachment] = session_;
+                if (!disconnected) {
+                    if (!read_only) registry_.sessions[session_->attachment] = session_;
+                    registry_.sessions[session_->read_attachment] = session_;
+                    registry_.device_sessions[udid] = session_;
+                }
             }
             if (disconnected) {
                 close();
@@ -866,7 +946,9 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             throw;
         }
         Reply r;
-        r.result = {{"udid", session_->device.udid()}, {"attachment", session_->attachment}};
+        r.result = {{"udid", session_->device.udid()},
+                    {"attachment", read_only_ ? session_->read_attachment : session_->attachment},
+                    {"access", read_only_ ? "read" : "control"}};
         return r;
     }
     return Reply::failure("unknown_method", "Unknown method: " + method);
