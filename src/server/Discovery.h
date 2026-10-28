@@ -3,6 +3,8 @@
 #include "remote/Discovery.h"
 #include <nlohmann/json.hpp>
 #include <set>
+#include <algorithm>
+#include <iterator>
 
 namespace xdb::server {
 inline const char *pairing_state(remote::DiscoveryPairing value) {
@@ -41,5 +43,29 @@ inline nlohmann::json discovery_json(const remote::DiscoveryResult &value,
                            {"connection", active ? "connected" : "unverified"}});
     }
     return {{"devices", devices}, {"warnings", value.warnings}, {"cancelled", value.cancelled}};
+}
+// A live authenticated endpoint is useful even without a multicast advertisement.
+inline void merge_manual_connection(nlohmann::json &result, const std::string &udid, const std::string &name,
+                                    const std::string &address, uint16_t port) {
+    using Json = nlohmann::json;
+    auto &devices = result["devices"];
+    auto device = std::find_if(devices.begin(), devices.end(), [&](const auto &d) {
+        return d.value("udid", std::string()) == udid;
+    });
+    if (device == devices.end()) {
+        devices.push_back({{"udid", udid}, {"name", name}, {"candidates", Json::array()}});
+        device = std::prev(devices.end());
+    }
+    (*device)["state"] = "connected";
+    (*device)["connection"] = "connected";
+    (*device)["pairing"] = "record_present";
+    (*device)["manual_connection"] = {{"address", address}, {"port", port}};
+    auto &candidates = (*device)["candidates"];
+    if (std::none_of(candidates.begin(), candidates.end(), [&](const auto &c) {
+            return c.value("transport", std::string()) == "wifi" &&
+                   c.value("address", std::string()) == address && c.value("port", 0) == port;
+        })) candidates.push_back({{"transport", "wifi"}, {"address", address}, {"port", port},
+                                   {"interface", ""}, {"paired", true}, {"pairing", "record_present"},
+                                   {"connection_type", "RemotePairing"}});
 }
 } // namespace xdb::server

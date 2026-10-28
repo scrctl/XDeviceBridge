@@ -560,27 +560,10 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
             if (!session->connection->closed) connected.insert(session->udid);
         for (const auto &connection : connections) connected.insert(connection->device.udid());
         r.result = discovery_json(value, connected);
-        if (mode != "usb") for (const auto &connection : connections) {
-            auto &devices = r.result["devices"];
-            auto device = std::find_if(devices.begin(), devices.end(), [&](const auto &d) {
-                return d.value("udid", std::string()) == connection->device.udid();
-            });
-            if (device == devices.end()) {
-                devices.push_back({{"udid", connection->device.udid()}, {"name", connection->device.property("DeviceName")},
-                                   {"candidates", Json::array()}, {"state", "connected"},
-                                   {"pairing", "record_present"}, {"connection", "connected"}});
-                device = std::prev(devices.end());
-            }
-            // Manual endpoints remain listed even when multicast discovery is unavailable.
-            (*device)["manual_connection"] = {{"address", connection->address}, {"port", connection->port}};
-            auto &candidates = (*device)["candidates"];
-            if (std::none_of(candidates.begin(), candidates.end(), [&](const auto &c) {
-                    return c.value("transport", std::string()) == "wifi" &&
-                           c.value("address", std::string()) == connection->address && c.value("port", 0) == connection->port;
-                })) candidates.push_back({{"transport", "wifi"}, {"address", connection->address},
-                                           {"port", connection->port}, {"interface", ""}, {"paired", true},
-                                           {"pairing", "record_present"}, {"connection_type", "RemotePairing"}});
-        }
+        if (mode != "usb")
+            for (const auto &connection : connections)
+                merge_manual_connection(r.result, connection->device.udid(), connection->device.property("DeviceName"),
+                                        connection->address, connection->port);
         r.result["capabilities"] = {{"video_decode", kHaveDecoder}};
         return r;
     }

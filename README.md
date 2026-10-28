@@ -138,7 +138,7 @@ xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
-After pairing, keep an explicit Wi-Fi connection in Server:
+With XDB Server/CLI 1.2 or newer, keep an explicit Wi-Fi connection after pairing:
 
 ```sh
 xdb connect 192.168.1.10:49152

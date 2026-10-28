@@ -1,4 +1,5 @@
 #include "remote/Discovery.h"
+#include "server/Discovery.h"
 #include "transport/Usbmux.h"
 #include "wifi/Mdns.h"
 #include "wifi/PairRecord.h"
@@ -162,6 +163,20 @@ void write_file(const std::filesystem::path &path, const std::string &text) {
     if (!out) throw std::runtime_error("Cannot write synthetic record fixture");
 }
 
+void test_manual_connection() {
+    auto result = server::discovery_json({}, {});
+    server::merge_manual_connection(result, "phone", "Test iPhone", "10.0.0.7", 49152);
+    check(result["devices"].size() == 1 && result["devices"][0]["state"] == "connected" &&
+              result["devices"][0]["pairing"] == "record_present",
+          "manual connection appears without an advertisement");
+    auto &phone = result["devices"][0];
+    phone["pairing"] = "unknown"; // USB discovery does not inspect Wi-Fi pairing.
+    server::merge_manual_connection(result, "phone", "", "10.0.0.7", 49152);
+    check(result["devices"].size() == 1 && phone["candidates"].size() == 1 &&
+              phone["pairing"] == "record_present" && phone["name"] == "Test iPhone",
+          "manual merge restores pairing state without duplicate devices/endpoints");
+}
+
 void test_record_loading() {
     TempDirectory directory;
     auto paired = paired_record();
@@ -252,6 +267,7 @@ void test_non_network_paths() {
 int main() {
     try {
         test_merge();
+        test_manual_connection();
         test_record_loading();
         test_non_network_paths();
     } catch (const std::exception &error) {

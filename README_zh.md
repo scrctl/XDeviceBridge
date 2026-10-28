@@ -133,7 +133,7 @@ xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
-已配对后，可明确指定地址建立持久的 Wi-Fi 连接：
+XDB Server／CLI 1.2 起，已配对后可明确指定地址建立持久的 Wi-Fi 连接：
 
 ```sh
 xdb connect 192.168.1.10:49152
