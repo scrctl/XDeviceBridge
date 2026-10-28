@@ -12,8 +12,9 @@ device services run in xdb Server. Device and OS support remains service-depende
 see the [validation boundaries](docs/VALIDATION.md) and [changelog](CHANGELOG.md).
 
 Version 1.1 adds native system discovery with shared subscriptions on desktop,
-an Android NSD adapter, and DDI status/removal commands. C ABI 1 and protocol 1
-remain unchanged. Restart an existing Server after upgrading to activate these
+an Android NSD adapter, and DDI status/removal commands. Version 1.2 adds manual
+IP connections retained by Server and configurable pairing display brands.
+C ABI 1 and protocol 1 remain unchanged. Restart an existing Server after upgrading to activate these
 changes; existing pairing records are retained.
 
 ## Architecture

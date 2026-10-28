@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-10-28
 
 - Add `xdb connect HOST[:PORT]` and `xdb disconnect [HOST[:PORT]]`. Authenticate
   an explicit Wi-Fi endpoint without discovery; retain its base connection in
@@ -14,6 +14,9 @@
   display serials, pairing identifiers, keys and stored records. Advertise support
   through `server.info.capabilities.pairing_display_brand` so clients can detect
   older servers before requesting a custom prefix.
+- Simplify text device listings by omitting the redundant `connection:` label.
+  Keep the JSON field for API compatibility, prefer a sole manual connection for
+  automatic screenshot selection, and report unsupported older Servers clearly.
 
 ## 1.1.0 — 2026-10-27
 

@@ -12,6 +12,7 @@ scrctl 和 MaaFramework 使用轻量客户端，设备服务运行在 xdb Server
 版本变化见[变更记录](CHANGELOG.md)。
 
 1.1 新增桌面原生持续发现订阅、Android NSD 适配器，以及 DDI 状态查询和移除命令。
+1.2 新增由 Server 保留的手动 IP 连接，以及可配置的配对显示品牌。
 C ABI 1 和协议 1 保持不变。升级后须重启已运行的 Server 才能使用这些改进，
 现有配对记录会保留。
 
