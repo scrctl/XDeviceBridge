@@ -52,6 +52,9 @@ class Socket {
     /// 避免对端未发送 FIN 时永久等待；多次读取的总期限仍由调用方控制。
     bool set_read_timeout(int ms, std::string &err);
 
+    // Detect an idle peer disappearing without sending application/media traffic.
+    bool enable_keepalive(std::string &err);
+
     /// 读一个 lockdown 风格的帧：4 字节**大端**长度 + 该长度的负载。
     bool read_len_prefixed_be(std::vector<uint8_t> &out, std::string &err);
     bool write_len_prefixed_be(std::string_view payload, std::string &err);

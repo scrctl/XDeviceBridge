@@ -42,7 +42,7 @@ local processes. Phone authentication is separate. Credentials stay in Server.
 
 | State | Methods available |
 | --- | --- |
-| Connected SDK / completed hello, no device session | server.info, server.stop, devices, pair, ddi.download, ddi.prepare, connection.open, connection.attach, connection.close |
+| Connected SDK / completed hello, no device session | server.info, server.stop, devices, pair, connect, disconnect, ddi.download, ddi.prepare, connection.open, connection.attach, connection.close |
 | Device session owned or attached | All above plus device/display/input/app/clipboard/media methods; another open/attach on this connection fails |
 | Detached by connection.close | Management methods available again; open/attach can create a new association |
 | Interrupted, transport failed, destroyed | Discard client; reconnect with a new handle |
@@ -51,7 +51,7 @@ One UDID has one owning session at a time. Other sockets may share it via its
 private `attachment` string. Opening the same UDID again returns `device_busy`.
 An attached client has the same control rights; it is not a read-only subscriber.
 The session survives until the **last** attached connection closes. Then media
-is finalized, held input releases are attempted and the lease is freed. Cleanup
+is finalized, held input releases are attempted and the lease is freed. A manual `connect` base connection survives this session cleanup. Cleanup
 cannot promise successful releases if the phone/transport has already failed.
 
 Media configuration is shared by attachments. Use one controller to change media
@@ -68,7 +68,8 @@ not a transaction mechanism for multiple control clients.
 | invalid_params | Missing/wrong JSON field type, bounded numeric value or explicit parameter validation failed. Fix request; connection can remain usable. |
 | cancelled | Cancellation detected before backend dispatch; disconnect-time cancellation may instead give EOF/no response. |
 | operation_failed | Device, discovery/connection, pairing, DDI, codec, recording or other backend failure. Message explains this occurrence; no stable subcodes yet. |
-| device_busy | Device lease held by another session or pairing operation. Close its session/attachments first. |
+| device_busy | Device lease held by another session/operation, or a manual connection blocks management. Close sessions/attachments or disconnect the manual connection. |
+| not_paired | No usable local Wi-Fi record for connect. Pair first. |
 | invalid_state | Method not valid for current connection/media state; fix ordering. |
 | invalid_session | Attachment no longer identifies a live session. Open a new one. |
 | not_connected | No device session for a device-dependent request. Open/attach first. |
@@ -106,6 +107,10 @@ not replace wire protocol negotiation or prove a device is connected.
 `capabilities.pairing_display_brand:true` advertises support for `pair.display_brand`.
 Treat an absent capability as unsupported; older servers may ignore unknown fields.
 
+`capabilities.manual_connections:true` advertises the `connect` / `disconnect`
+methods added in 1.2. Older servers may return `unknown_method`; protocol and C ABI
+remain 1.
+
 ### `server.stop`
 
 No params/session required. Result `{}` is sent before shutdown is requested.
@@ -115,6 +120,10 @@ additionally waits for the port to close. Embedded owners must still call
 `xdb_server_stop` to release their server handle.
 
 ### `devices`
+
+Manual connections are merged by UDID with discovered devices. They remain listed
+as `connected` without an advertisement, including `manual_connection:{address,port}`
+and their Wi-Fi candidate. Transport filters still apply.
 
 | Param | Type / default |
 | --- | --- |
@@ -142,6 +151,43 @@ Retain all candidates; one UDID can have multiple interfaces/addresses.
 `paired` means a complete matching local record. Candidate pairing reasons are
 `record_present`, `incomplete_record`, `identifier_hint`, `ambiguous`,
 `invalid_advertisement`, `crypto_error`, `unknown`; tolerate future reason values.
+
+### `connect`
+
+No device session required. Authenticate and retain an explicit Wi-Fi connection
+in Server; no discovery, new pairing or DDI preparation is performed.
+
+| Param | Type / default |
+| --- | --- |
+| address | **Required** string: device IP or hostname; accepts HOST[:PORT] / [IPv6%scope]:PORT |
+| port | Optional integer 1..65535, overrides endpoint port; default 49152 (device RemotePairing port) |
+| udid | Optional string: select a usable local pairing record; required if multiple devices have records |
+| timeout_ms | Integer 1..300000; default 30000 for connection/authentication |
+
+Result `{udid:string,address:string,port:integer,reused:bool}`. A successful new
+connection completed pair-verify, TLS tunnel and RSD setup. Selecting a local
+record alone never proves connectivity. Repeat connect for the same UDID reuses
+the live connection and returns its existing endpoint, even if another address
+was requested. It does not move an established connection to a different address.
+
+Server owns the base connection after the requesting socket exits. Device sessions
+reuse it; their media/HID services are released when the last attachment closes,
+while the base connection remains idle without starting media. Independent control
+sessions still return `device_busy`. Transport loss, `disconnect` or Server shutdown
+invalidates attached sessions and closes the connection; no automatic reconnect or
+restart restoration occurs. Idle TCP keepalive detects silent transport loss;
+detection time depends on the operating system, not a fixed RPC deadline.
+
+### `disconnect`
+
+No device session required. Optional `address` and `port` use the same syntax as
+`connect`; optional `udid` filters by identity. With no selector, closes **all manual
+connections** in this Server. An endpoint and UDID together must both match.
+Result `{disconnected:[{udid:string,address:string,port:integer}]}`; an empty array
+is success when no connection matched. Invalidates active sessions borrowing those
+connections; later device calls return `not_connected` and old attachments cannot
+be reused. Pairing records, DDI and unrelated sessions remain untouched.
+Close/disconnect manual connections before pairing or DDI management.
 
 ### `pair`
 
@@ -265,6 +311,10 @@ before retrying. No automatic retry or rollback is performed.
 
 ### `connection.open`
 
+An existing manual Wi-Fi connection for the selected UDID is reused for `auto`/`wifi`.
+An empty UDID selects a sole manual connection before attempting discovery.
+Explicit `usb` requires disconnecting that manual connection first.
+
 | Param | Type / default |
 | --- | --- |
 | udid | string **required**; empty requests automatic selection of one identified device |
@@ -272,9 +322,10 @@ before retrying. No automatic retry or rollback is performed.
 | wifi | string; default empty; auto or explicit RemotePairing address |
 | port | integer 1..65535; default 49152 (explicit Wi-Fi address) |
 
-No current session allowed. Result `{udid:string,attachment:string}`. In auto mode,
-empty wifi tries USB then paired Wi-Fi; wifi auto/address chooses the wireless
-path. `transport:usb` forces USB. `transport:wifi` with empty wifi uses discovery.
+No current session allowed. Result `{udid:string,attachment:string}`. Without a
+manual connection, auto mode with empty wifi tries USB then paired Wi-Fi; wifi
+auto/address chooses the wireless path. `transport:usb` forces USB.
+`transport:wifi` with empty wifi uses discovery only if no manual connection exists.
 Explicit UDID failures normally return `operation_failed`; not_found/ambiguous
 selection errors refer to empty-UDID discovery. Preparation shares a bounded
 30-second connection budget, but callers should still manage cancellation.
@@ -291,7 +342,8 @@ owners detach. Multiple sockets do not allow multiple owners of one device.
 ### `connection.close`
 
 No params. Result `{}`; idempotent. Detaches **this socket**. Other attachments may
-keep the session, media and held input alive. To finish a recording with errors
+keep the session, media and held input alive. After the last attachment closes,
+a manual base connection remains idle in Server. To finish a recording with errors
 reported, call media.finish before closing; destructor cleanup discards errors.
 
 ### `device.info`

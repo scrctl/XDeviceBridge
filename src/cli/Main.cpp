@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "ipc/Json.h"
+#include "ipc/Endpoint.h"
 #include "cli/Help.h"
 #include "util/DataDirectory.h"
 #include "ipc/Wire.h"
@@ -198,8 +199,18 @@ int main(int argc, char **argv) {
             return ok ? 0 : 1;
         }
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
-            args[0] != "rpc" && args[0] != "rpc-shell")
+            args[0] != "rpc" && args[0] != "rpc-shell" && args[0] != "connect" && args[0] != "disconnect")
             throw std::invalid_argument("Unknown command; run xdb --help");
+        std::optional<xdb::ipc::Endpoint> endpoint;
+        if (args[0] == "connect" || args[0] == "disconnect") {
+            if (args.size() > 2 || (args[0] == "connect" && args.size() != 2))
+                throw std::invalid_argument("Expected connect HOST[:PORT] or disconnect [HOST[:PORT]]");
+            if (wifi || usb || replace || !cache.empty())
+                throw std::invalid_argument("connect/disconnect use an explicit Wi-Fi endpoint, without --wifi/--usb");
+            if (args.size() == 2) endpoint = xdb::ipc::parse_endpoint(args[1]);
+            if (timeout == 0 || (args[0] == "disconnect" && timeout >= 0))
+                throw std::invalid_argument("--timeout applies only to connect and must be positive");
+        }
         if (args[0] == "ddi") {
             if (args.size() != 2 ||
                 (args[1] != "prepare" && args[1] != "status" && args[1] != "remove"))
@@ -247,7 +258,19 @@ int main(int argc, char **argv) {
                     print_devices(value["result"], long_output);
                 else if (method == "pair")
                     std::cout << "Paired: " << value["result"].value("udid", std::string()) << '\n';
-                else if (method == "ddi.status") {
+                else if (method == "connect") {
+                    const auto &result = value["result"];
+                    const xdb::ipc::Endpoint connected{result.at("address").get<std::string>(), result.at("port").get<uint16_t>()};
+                    std::cout << (result.value("reused", false) ? "Already connected to " : "Connected to ")
+                              << connected.label() << " (" << result.at("udid").get<std::string>() << ")\n";
+                } else if (method == "disconnect") {
+                    const auto &disconnected = value["result"].at("disconnected");
+                    if (disconnected.empty()) std::cout << "No matching manual connection\n";
+                    for (const auto &item : disconnected) {
+                        const xdb::ipc::Endpoint closed{item.at("address").get<std::string>(), item.at("port").get<uint16_t>()};
+                        std::cout << "Disconnected " << closed.label() << " (" << item.at("udid").get<std::string>() << ")\n";
+                    }
+                } else if (method == "ddi.status") {
                     const auto &state = value["result"];
                     if (state.at("mounted").get<bool>())
                         std::cout << "DDI mounted: " << state.at("image_type").get<std::string>()
@@ -305,6 +328,14 @@ int main(int argc, char **argv) {
         Json params = Json::object();
         if (!serial.empty())
             params["udid"] = serial;
+        if (args[0] == "connect" || args[0] == "disconnect") {
+            if (endpoint) {
+                params["address"] = endpoint->address;
+                params["port"] = endpoint->port;
+            }
+            if (timeout >= 0) params["timeout_ms"] = timeout;
+            return request(args[0], params).value("ok", false) ? 0 : 1;
+        }
         if (args[0] == "devices" || args[0] == "pair") {
             if (args.size() != 1)
                 throw std::invalid_argument("Unexpected argument");

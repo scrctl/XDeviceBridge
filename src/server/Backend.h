@@ -22,16 +22,13 @@ bool prepare_ddi(const PrepareOptions &, std::string &, const Event &, const Can
 std::optional<Json> manage_ddi(const PrepareOptions &, bool remove, std::string &, const Cancel &);
 std::optional<remote::Device> open_device(const std::string &, const std::string &, std::string &, uint16_t,
                                           const Cancel &, const std::string &);
+struct DeviceConnection;
 struct Registry {
     std::mutex mutex;
     std::set<std::string> devices;
     std::map<std::string, std::weak_ptr<void>> sessions;
-    bool acquire(const std::string &udid) {
-        std::lock_guard lock(mutex);
-        if (devices.contains("@pairing") || (udid == "@pairing" && !devices.empty()))
-            return false;
-        return devices.insert(udid).second;
-    }
+    std::map<std::string, std::shared_ptr<DeviceConnection>> connections;
+    bool acquire(const std::string &udid, bool use_connection = false);
     void release(const std::string &udid) {
         std::lock_guard lock(mutex);
         devices.erase(udid);
@@ -54,7 +51,9 @@ class Backend {
   public:
     Backend(Registry &, std::string data_directory);
     ~Backend();
-    bool has_session() const { return bool(session_); }
+    bool has_session() const;
+    // Drop dead/manual connections without occupying a client worker.
+    static void maintain_connections(Registry &, bool stop_all = false);
     Reply handle(const std::string &method, const Json &params, const Event &, const Cancel &);
 
   private:
@@ -64,6 +63,8 @@ class Backend {
     std::shared_ptr<Session> session_;
     void close();
     Reply handle_management(const std::string &, const Json &, const Event &, const Cancel &);
+    static void disconnect_connection(Registry &, const std::shared_ptr<DeviceConnection> &);
+    Reply handle_persistent_connection(const std::string &, const Json &, const Cancel &);
     Reply handle_connection(const std::string &, const Json &, const Cancel &);
     Reply handle_input(const std::string &, const Json &, const Cancel &, Session &);
 };

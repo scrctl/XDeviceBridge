@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "Backend.h"
 #include "ApiParameters.h"
+#include "ipc/Endpoint.h"
 #include "Discovery.h"
 #include "ddi/Download.h"
 #include "hid/Hid.h"
@@ -92,6 +93,25 @@ std::optional<remote::Device> open_device(const std::string &udid, const std::st
         error = "No paired Wi-Fi device discovered";
     return std::nullopt;
 }
+struct DeviceConnection {
+    remote::Device device;
+    std::string address;
+    uint16_t port;
+    std::atomic<bool> closed{false};
+    DeviceConnection(remote::Device value, std::string host = {}, uint16_t p = 49152)
+        : device(std::move(value)), address(std::move(host)), port(p) {}
+    bool alive() { return !closed && device.stack() && device.stack()->pumping(); }
+    void interrupt() {
+        if (!closed.exchange(true)) device.interrupt_startup();
+    }
+};
+bool Registry::acquire(const std::string &udid, bool use_connection) {
+    std::lock_guard lock(mutex);
+    if (devices.contains("@pairing") ||
+        (udid == "@pairing" && (!devices.empty() || !connections.empty())) ||
+        (!use_connection && connections.contains(udid))) return false;
+    return devices.insert(udid).second;
+}
 struct Backend::Session {
     // Reverse destruction keeps all services/worker references inside Device's lifetime.
     Registry &registry;
@@ -99,7 +119,9 @@ struct Backend::Session {
     std::shared_mutex media_mutex;
     std::mutex control_mutex, pcm_mutex;
     bool pcm_started = false;
-    remote::Device device;
+    std::shared_ptr<DeviceConnection> connection;
+    remote::Device &device;
+    bool retired = false;
     std::shared_ptr<media::SessionGroup> media_group = std::make_shared<media::SessionGroup>();
     std::unique_ptr<remote::DisplayWatcher> display;
     std::unique_ptr<hid::Service> hid;
@@ -111,7 +133,8 @@ struct Backend::Session {
     std::set<std::pair<uint16_t, uint16_t>> held_buttons;
     bool touching = false;
     double x = 0, y = 0;
-    Session(Registry &r, remote::Device value) : registry(r), udid(value.udid()), device(std::move(value)) {}
+    Session(Registry &r, std::shared_ptr<DeviceConnection> value)
+        : registry(r), udid(value->device.udid()), connection(std::move(value)), device(connection->device) {}
     bool finish(std::string &error) {
         if (audio)
             audio->stop_receiving();
@@ -128,24 +151,55 @@ struct Backend::Session {
         recorder.reset();
         return ok;
     }
-    ~Session() {
+    void shutdown() {
+        std::unique_lock media_lock(media_mutex);
+        std::lock_guard control_lock(control_mutex);
+        if (retired) return;
+        retired = true;
         std::string ignored;
         finish(ignored);
-        {
-            std::lock_guard lock(registry.mutex);
-            registry.sessions.erase(attachment);
-            registry.devices.erase(udid);
-        }
-        if (hid) {
+        if (hid && !connection->closed) {
             if (touching)
                 hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
             hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report({}), ignored);
         }
-        if (buttons)
+        if (buttons && !connection->closed)
             for (auto [page, code] : held_buttons)
                 buttons->release(page, code, ignored);
+        buttons.reset();
+        hid.reset();
+        display.reset();
+        std::lock_guard lock(registry.mutex);
+        registry.sessions.erase(attachment);
+        registry.devices.erase(udid);
     }
+    ~Session() { shutdown(); }
 };
+bool Backend::has_session() const { return session_ && !session_->connection->closed; }
+void Backend::disconnect_connection(Registry &registry, const std::shared_ptr<DeviceConnection> &connection) {
+    // Wake blocked service I/O before waiting for the session's media/control locks.
+    connection->interrupt();
+    std::vector<std::shared_ptr<Session>> sessions;
+    {
+        std::lock_guard lock(registry.mutex);
+        const auto found = registry.connections.find(connection->device.udid());
+        if (found != registry.connections.end() && found->second == connection)
+            registry.connections.erase(found);
+        for (const auto &[key, weak] : registry.sessions)
+            if (auto session = std::static_pointer_cast<Session>(weak.lock());
+                session && session->connection == connection) sessions.push_back(std::move(session));
+    }
+    for (const auto &session : sessions) session->shutdown();
+}
+void Backend::maintain_connections(Registry &registry, bool stop_all) {
+    std::vector<std::shared_ptr<DeviceConnection>> dead;
+    {
+        std::lock_guard lock(registry.mutex);
+        for (const auto &[id, connection] : registry.connections)
+            if (stop_all || !connection->alive()) dead.push_back(connection);
+    }
+    for (const auto &connection : dead) disconnect_connection(registry, connection);
+}
 Backend::Backend(Registry &r, std::string dir) : registry_(r), directory_(std::move(dir)) {}
 Backend::~Backend() { close(); }
 void Backend::close() {
@@ -162,13 +216,15 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare" ||
         method == "ddi.status" || method == "ddi.remove")
         return handle_management(method, p, event, cancel);
+    if (method == "connect" || method == "disconnect")
+        return handle_persistent_connection(method, p, cancel);
     if (method == "connection.close" || method == "connection.attach" || method == "connection.open")
         return handle_connection(method, p, cancel);
     if (method.starts_with("input.") && method != "input.text" && method != "input.tap" &&
         method != "input.touch" && method != "input.keyboard" && method != "input.button")
         return Reply::failure("unknown_method", "Unknown method: " + method);
-    if (!session_)
-        return Reply::failure("not_connected", "Open a device session first");
+    if (!has_session())
+        return Reply::failure("not_connected", "Open a device session first (or reopen after disconnect)");
     auto &s = *session_;
     if (method == "network.debug") {
         if (auto *stack = s.device.stack())
@@ -193,6 +249,8 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     std::unique_lock<std::mutex> control_lock(s.control_mutex, std::defer_lock);
     if (!media_read)
         control_lock.lock();
+    if (s.connection->closed)
+        return Reply::failure("not_connected", "Device disconnected; open a new session");
     const auto geometry = [&] {
         if (!s.display)
             return Json::object();
@@ -488,16 +546,41 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         Reply r;
         std::set<std::string> connected;
         std::vector<std::shared_ptr<Session>> sessions;
+        std::vector<std::shared_ptr<DeviceConnection>> connections;
         {
             std::lock_guard lock(registry_.mutex);
+            for (const auto &[id, connection] : registry_.connections)
+                if (connection->alive()) connections.push_back(connection);
             for (const auto &[key, weak] : registry_.sessions) {
                 if (auto session = std::static_pointer_cast<Session>(weak.lock()))
                     sessions.push_back(std::move(session));
             }
         }
         for (const auto &session : sessions)
-            connected.insert(session->udid);
+            if (!session->connection->closed) connected.insert(session->udid);
+        for (const auto &connection : connections) connected.insert(connection->device.udid());
         r.result = discovery_json(value, connected);
+        if (mode != "usb") for (const auto &connection : connections) {
+            auto &devices = r.result["devices"];
+            auto device = std::find_if(devices.begin(), devices.end(), [&](const auto &d) {
+                return d.value("udid", std::string()) == connection->device.udid();
+            });
+            if (device == devices.end()) {
+                devices.push_back({{"udid", connection->device.udid()}, {"name", connection->device.property("DeviceName")},
+                                   {"candidates", Json::array()}, {"state", "connected"},
+                                   {"pairing", "record_present"}, {"connection", "connected"}});
+                device = std::prev(devices.end());
+            }
+            // Manual endpoints remain listed even when multicast discovery is unavailable.
+            (*device)["manual_connection"] = {{"address", connection->address}, {"port", connection->port}};
+            auto &candidates = (*device)["candidates"];
+            if (std::none_of(candidates.begin(), candidates.end(), [&](const auto &c) {
+                    return c.value("transport", std::string()) == "wifi" &&
+                           c.value("address", std::string()) == connection->address && c.value("port", 0) == connection->port;
+                })) candidates.push_back({{"transport", "wifi"}, {"address", connection->address},
+                                           {"port", connection->port}, {"interface", ""}, {"paired", true},
+                                           {"pairing", "record_present"}, {"connection_type", "RemotePairing"}});
+        }
         r.result["capabilities"] = {{"video_decode", kHaveDecoder}};
         return r;
     }
@@ -576,7 +659,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         if (o.serial.empty())
             return Reply::failure("invalid_params", "UDID is required");
         if (!registry_.acquire(o.serial))
-            return Reply::failure("device_busy", "Close the device session before managing DDI");
+            return Reply::failure("device_busy", "Close device sessions and disconnect manual connections before managing DDI");
         struct Release {
             Registry &r;
             std::string id;
@@ -605,6 +688,82 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
     return Reply::failure("unknown_method", "Unknown method: " + method);
 }
 
+Reply Backend::handle_persistent_connection(const std::string &method, const Json &p, const Cancel &cancel) {
+    // Explicit endpoints never invoke discovery. A sole usable local record may
+    // choose the identity, but pair-verify must still authenticate the endpoint.
+    const auto udid = p.value("udid", std::string());
+    const auto address = p.value("address", std::string());
+    std::optional<ipc::Endpoint> endpoint;
+    if (!address.empty()) endpoint = ipc::parse_endpoint(address);
+    if (p.contains("port")) {
+        if (!endpoint) return Reply::failure("invalid_params", "port requires an address");
+        endpoint->port = uint16_t(bounded(p, "port", 49152, 1, 65535));
+    }
+    maintain_connections(registry_);
+    if (method == "disconnect") {
+        std::vector<std::shared_ptr<DeviceConnection>> selected;
+        {
+            std::lock_guard lock(registry_.mutex);
+            for (const auto &[id, connection] : registry_.connections)
+                if ((udid.empty() || id == udid) &&
+                    (!endpoint || (endpoint->address == connection->address && endpoint->port == connection->port)))
+                    selected.push_back(connection);
+        }
+        Reply reply;
+        reply.result["disconnected"] = Json::array();
+        for (const auto &connection : selected) {
+            disconnect_connection(registry_, connection);
+            reply.result["disconnected"].push_back({{"udid", connection->device.udid()},
+                                                     {"address", connection->address}, {"port", connection->port}});
+        }
+        return reply;
+    }
+    if (!endpoint) return Reply::failure("invalid_params", "connect requires an address");
+    const auto timeout = bounded(p, "timeout_ms", 30000, 1, 300000);
+    auto paired = records(directory_, cancel);
+    const wifi::PairRecord *record = nullptr;
+    for (const auto &candidate : paired) {
+        if (!candidate.complete() || !candidate.has_peer_identity() || (!udid.empty() && candidate.udid != udid))
+            continue;
+        if (record && candidate.udid != record->udid)
+            return Reply::failure("ambiguous_device", "Multiple paired devices; select one with -s UDID");
+        record = &candidate;
+    }
+    if (!record) return Reply::failure("not_paired", "No usable local Wi-Fi pairing record; pair the device first");
+    const auto result = [](const std::shared_ptr<DeviceConnection> &connection, bool reused) {
+        Reply reply;
+        reply.result = {{"udid", connection->device.udid()}, {"address", connection->address},
+                        {"port", connection->port}, {"reused", reused}};
+        return reply;
+    };
+    {
+        std::lock_guard lock(registry_.mutex);
+        if (auto found = registry_.connections.find(record->udid); found != registry_.connections.end()) {
+            if (found->second->alive()) return result(found->second, true);
+            return Reply::failure("not_connected", "Previous connection is closing; connect again after cleanup");
+        }
+    }
+    if (!registry_.acquire(record->udid)) return Reply::failure("device_busy", "Device is already in use");
+    struct Release {
+        Registry &registry;
+        const std::string &udid;
+        ~Release() { registry.release(udid); }
+    } release{registry_, record->udid};
+    std::string error;
+    const transport::IoBudget budget({std::chrono::milliseconds(timeout), cancel});
+    auto device = remote::Device::establish_wifi_bounded(endpoint->address, *record, budget, error, false, endpoint->port);
+    if (!device || !device->enable_idle_keepalive(error))
+        return Reply::failure("operation_failed", error);
+    if (!budget.check(error)) return Reply::failure("cancelled", error);
+    auto connection = std::make_shared<DeviceConnection>(std::move(*device), endpoint->address, endpoint->port);
+    if (!connection->alive()) return Reply::failure("not_connected", "Device disconnected during authentication");
+    {
+        std::lock_guard lock(registry_.mutex);
+        registry_.connections.emplace(record->udid, connection);
+    }
+    return result(connection, false);
+}
+
 Reply Backend::handle_connection(const std::string &method, const Json &p, const Cancel &cancel) {
     auto fail = [](const std::string &error) { return Reply::failure("operation_failed", error); };
     std::string error;
@@ -622,8 +781,10 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             if (found != registry_.sessions.end())
                 session_ = std::static_pointer_cast<Session>(found->second.lock());
         }
-        if (!session_)
+        if (!has_session()) {
+            session_.reset();
             return Reply::failure("invalid_session", "Session attachment is no longer available");
+        }
         return {};
     }
     if (method == "connection.open") {
@@ -633,6 +794,14 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
         auto mode = p.value("transport", std::string("auto"));
         if (mode != "auto" && mode != "usb" && mode != "wifi")
             return Reply::failure("invalid_params", "Unknown transport");
+        if (udid.empty() && mode != "usb") {
+            std::lock_guard lock(registry_.mutex);
+            for (const auto &[id, connection] : registry_.connections) {
+                if (!connection->alive()) continue;
+                if (!udid.empty()) return Reply::failure("ambiguous_device", "Multiple connected devices; select a UDID");
+                udid = id;
+            }
+        }
         if (udid.empty()) {
             remote::DiscoveryOptions o;
             o.pairing_directory = directory_;
@@ -650,24 +819,43 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             if (udid.empty())
                 return Reply::failure("device_not_found", "No identified device available");
         }
-        if (!registry_.acquire(udid))
+        if (!registry_.acquire(udid, true))
             return Reply::failure("device_busy", "Device is already in use");
         lease_ = udid;
         try {
+            std::shared_ptr<DeviceConnection> connection;
+            {
+                std::lock_guard lock(registry_.mutex);
+                auto found = registry_.connections.find(udid);
+                if (found != registry_.connections.end()) {
+                    connection = found->second;
+                }
+            }
+            if (connection && mode == "usb") {
+                close();
+                return Reply::failure("device_busy", "Disconnect the manual Wi-Fi connection before using USB");
+            }
             auto address = p.value("wifi", std::string());
             if (mode == "wifi" && address.empty())
                 address = "auto";
-            auto device =
-                mode == "usb"
-                    ? remote::Device::establish_bounded(
-                          udid, transport::IoBudget({std::chrono::seconds(30), cancel}), error, false, true)
-                    : open_device(udid, address, error, uint16_t(bounded(p, "port", 49152, 1, 65535)), cancel,
-                                  directory_);
-            if (!device) {
-                close();
-                return fail(error);
+            if (!connection) {
+                auto device =
+                    mode == "usb"
+                        ? remote::Device::establish_bounded(
+                              udid, transport::IoBudget({std::chrono::seconds(30), cancel}), error, false, true)
+                        : open_device(udid, address, error, uint16_t(bounded(p, "port", 49152, 1, 65535)), cancel,
+                                      directory_);
+                if (!device) {
+                    close();
+                    return fail(error);
+                }
+                connection = std::make_shared<DeviceConnection>(std::move(*device));
             }
-            session_ = std::make_shared<Session>(registry_, std::move(*device));
+            if (!connection->alive()) {
+                close();
+                return Reply::failure("not_connected", "Device connection was lost; connect again");
+            }
+            session_ = std::make_shared<Session>(registry_, std::move(connection));
             lease_.clear(); // Session releases the device only after its last attachment closes.
             auto key = wifi::random_bytes(32, error);
             if (!key) {
@@ -679,8 +867,16 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
                 session_->attachment += hex[byte >> 4];
                 session_->attachment += hex[byte & 15];
             }
-            std::lock_guard lock(registry_.mutex);
-            registry_.sessions[session_->attachment] = session_;
+            bool disconnected;
+            {
+                std::lock_guard lock(registry_.mutex);
+                disconnected = session_->connection->closed;
+                if (!disconnected) registry_.sessions[session_->attachment] = session_;
+            }
+            if (disconnected) {
+                close();
+                return Reply::failure("not_connected", "Device disconnected while opening session");
+            }
         } catch (...) {
             close();
             throw;

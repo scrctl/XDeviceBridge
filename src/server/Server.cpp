@@ -38,6 +38,7 @@ struct xdb_server {
     std::shared_ptr<xdb::wifi::mdns::detail::DiscoverySubscription> discovery;
     std::atomic<bool> stopping{false};
     std::jthread accept_thread;
+    std::jthread connection_monitor;
     // Only accept_thread mutates workers; stop first joins it, then interrupts workers.
     std::vector<std::unique_ptr<Worker>> workers;
     void run_client(Worker &worker) noexcept;
@@ -92,11 +93,16 @@ void xdb_server::run_client(Worker &worker) noexcept {
         worker.socket.set_read_timeout(5000, error);
         server::Backend backend(registry, directory);
         while (!stopping) {
-            const bool owns_session = backend.has_session();
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            bool owns_session = backend.has_session();
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
             if (!owns_session) worker.state = Worker::Idle;
             bool readable = false;
             while (!stopping && worker.state != Worker::Evicted) {
+                if (owns_session && !backend.has_session()) {
+                    owns_session = false;
+                    worker.state = Worker::Idle;
+                    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+                }
                 const int ready = transport::wait_socket(worker.socket.fd(), false, 100);
                 if (ready != 0) { readable = ready > 0; break; }
                 if (!owns_session && std::chrono::steady_clock::now() >= deadline) break;
@@ -146,7 +152,7 @@ void xdb_server::run_client(Worker &worker) noexcept {
                 if (method == "server.info")
                     result.result = {
                         {"protocol", ipc::protocol_version}, {"version", XDB_VERSION_STRING}, {"device_transport", "usb-or-wifi"},
-                        {"capabilities", {{"pairing_display_brand", true}}},
+                        {"capabilities", {{"pairing_display_brand", true}, {"manual_connections", true}}},
 #ifdef _WIN32
                         {"pid", GetCurrentProcessId()}};
 #else
@@ -218,6 +224,8 @@ void xdb_server::accept_loop() {
 }
 xdb_server::~xdb_server() {
     stopping = true;
+    if (connection_monitor.joinable()) connection_monitor.join();
+    xdb::server::Backend::maintain_connections(registry, true);
     if (accept_thread.joinable())
         accept_thread.join();
     for (auto &worker : workers)
@@ -238,6 +246,15 @@ xdb_server *xdb_server_start(uint16_t port, const char *directory) {
         }
         auto server = std::make_unique<xdb_server>();
         server->directory = directory;
+        auto *owner = server.get();
+        server->connection_monitor = std::jthread([owner] {
+            while (!owner->stopping) {
+                xdb::server::Backend::maintain_connections(owner->registry);
+                for (int i = 0; i < 10 && !owner->stopping; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            xdb::server::Backend::maintain_connections(owner->registry, true);
+        });
         if (!xdb::transport::initialize_sockets(diagnostic))
             return nullptr;
         server->listener = xdb::transport::Socket(::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));

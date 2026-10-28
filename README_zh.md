@@ -133,7 +133,25 @@ xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
-`devices` 为每个发现的设备输出一行；`devices -l` 额外显示名称、地址、网络接口以及
+已配对后，可明确指定地址建立持久的 Wi-Fi 连接：
+
+```sh
+xdb connect 192.168.1.10:49152
+xdb devices -l
+xdb screenshot screen.png
+xdb disconnect 192.168.1.10
+# 不传地址则断开全部手动连接；也可用 -s UDID 筛选。
+xdb disconnect
+```
+
+IP 直连不需要组播发现；本地存在多台设备的可用凭据时，须加 `-s UDID` 选记录。
+IPv6 的端口用方括号，例如 `xdb connect '[fe80::1%en0]:49152'`。
+手机端口默认 49152，`--port` 始终选择本机 Server 端口。
+连接由 Server 持有，CLI／截图／镜像会话退出后保留空闲隧道，不主动采集媒体。
+`disconnect` 使使用该连接的会话失效，但保留配对和 DDI；掉线、停止 Server 也会关闭连接，
+不自动重连。同一设备仍只允许一个独立控制会话。重新配对或管理 DDI 前先 disconnect。
+
+`devices` 为每个发现或手动连接的设备输出一行；`devices -l` 额外显示名称、地址、网络接口以及
 配对和连接详情。文本输出省略空名称和空端点字段，候选端点的配对原因仅在与设备
 汇总状态不同时显示；USB 未检查的 `unknown` 配对原因不显示。
 `--json` 保留完整的结构化响应。设备状态的含义如下：
@@ -142,7 +160,7 @@ xdb -s '<UDID>' screenshot screen.png --wifi
 | --- | --- |
 | `discovered` | 已通过 USB/mDNS 发现，但未匹配到已验证的本地 Wi-Fi 配对记录 |
 | `paired` | 完整的本地凭据匹配到了 Wi-Fi 广播，但尚未验证能否连接 |
-| `connected` | Server 当前持有已认证的设备会话，具体服务仍可能失败 |
+| `connected` | Server 当前持有已认证的连接／设备会话，具体服务仍可能失败 |
 
 列举设备不会主动连接。`pairing:record_present` 不代表手机接受了新的连接，
 USB 枚举成功也不代表已获得信任。无法识别身份的设备显示为 `(unidentified)`。
@@ -176,7 +194,7 @@ Windows 为 `%LOCALAPPDATA%/XDeviceBridge`，Linux 为
 客户端进程不加载服务端后端。Android 应用仍由自身启动内嵌 Server。
 
 不带地址的 `--wifi` 会发现已配对设备；`--wifi ADDRESS` 则明确指定 RemotePairing 地址。
-未限定传输方式时，设备会话优先尝试 USB，再回退到已配对的 Wi-Fi。
+已有手动连接时先复用；否则未限定传输方式的设备会话优先尝试 USB，再回退到已配对的 Wi-Fi。
 USB 需要系统 usbmux/Apple 移动设备服务正常运行，并在手机上授予信任。
 Android 初期支持 Wi-Fi，尚未实现 Android USB Host 接入。
 

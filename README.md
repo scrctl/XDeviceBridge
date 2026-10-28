@@ -138,7 +138,27 @@ xdb -s '<UDID>' ddi status --wifi
 xdb -s '<UDID>' screenshot screen.png --wifi
 ```
 
-`devices` prints one line per discovered device; `devices -l` includes its name,
+After pairing, keep an explicit Wi-Fi connection in Server:
+
+```sh
+xdb connect 192.168.1.10:49152
+xdb devices -l
+xdb screenshot screen.png
+xdb disconnect 192.168.1.10
+# No endpoint disconnects all manual connections; -s UDID filters by device.
+xdb disconnect
+```
+
+An explicit IP needs no multicast discovery. Multiple usable local device records
+require `-s UDID`. For IPv6 ports, use brackets: `xdb connect '[fe80::1%en0]:49152'`.
+The device port defaults to 49152; `--port` always selects the local Server port.
+Server keeps the idle tunnel after CLI/capture/media sessions exit, without
+starting media. `disconnect` invalidates its sessions but preserves pairing/DDI.
+Transport loss or Server exit also closes it, with no automatic reconnect. There
+is still one independent control session per device. Disconnect before pairing or
+DDI management.
+
+`devices` prints one line per discovered or manually connected device; `devices -l` includes its name,
 addresses, network interfaces and pairing/connection details. `--json` retains the
 complete structured response. Empty names and endpoint fields are omitted from
 text output. Candidate pairing reasons are shown only when they differ from the
@@ -149,7 +169,7 @@ States have distinct meanings:
 | --- | --- |
 | `discovered` | Found through USB/mDNS; no verified local Wi-Fi pairing record was matched |
 | `paired` | A complete local record matched the Wi-Fi advertisement; connection remains unverified |
-| `connected` | The server currently holds an authenticated device session; individual services may still fail |
+| `connected` | The server currently holds an authenticated connection/device session; individual services may still fail |
 
 Listing does not actively connect to devices. `pairing:record_present` never
 means the phone has accepted a new connection. USB trust is not inferred from

@@ -90,6 +90,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert info['protocol']==1 and info['version']
             assert client.xdb_client_version().decode() == info['version']
             assert info['capabilities']['pairing_display_brand'] is True
+            assert info['capabilities']['manual_connections'] is True
             assert client.xdb_client_server_version(c).decode() == info['version']
             unknown = request(c,'future.optional.method')
             assert not unknown['ok'] and unknown['error']['code']=='not_connected'
@@ -102,7 +103,18 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
                 assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
             assert not Path(data.decode()).exists(), 'invalid branding created pairing state'
 
+            for method, params in (('connect', {}), ('connect', {'address': ''}),
+                                   ('connect', {'address': '10.0.0.1', 'port': 0}),
+                                   ('connect', {'address': '10.0.0.1', 'timeout_ms': 0}),
+                                   ('connect', {'address': 'bad host'}), ('disconnect', {'port': 49152})):
+                rejected = request(c, method, params)
+                assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
+            not_paired = request(c, 'connect', {'address': '127.0.0.1'})
+            assert not not_paired['ok'] and not_paired['error']['code'] == 'not_paired', not_paired
+            assert request(c, 'disconnect')['result']['disconnected'] == []
+            assert not Path(data.decode()).exists(), 'connect/disconnect wrote pairing data'
             for method in ('ddi.status', 'ddi.remove'):
+
                 for params in ({}, {'udid': ''}, {'udid': 'offline', 'port': 0},
                                {'udid': 'offline', 'port': '49152'}):
                     rejected = request(c, method, params)

@@ -70,6 +70,7 @@ public:
     /// Abort startup I/O on this owned tunnel only. Caller must stop/join its
     /// watchdog before moving or destroying Device; never resume an aborted session.
     void interrupt_startup();
+    bool enable_idle_keepalive(std::string &err);
 
     /// 仅在 establish/establish_wifi 成功后访问 RSD 和隧道参数。
     [[nodiscard]] Rsd &rsd() { return *rsd_; }

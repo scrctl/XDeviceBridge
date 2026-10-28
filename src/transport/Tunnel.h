@@ -70,6 +70,7 @@ public:
     bool wait_readable(int ms, std::string &err, bool *timed_out = nullptr) override;
     uint16_t mtu() const override { return params_.mtu; }
     void shutdown() override { sock_.interrupt(); }
+    bool enable_keepalive(std::string &err) { return sock_.enable_keepalive(err); }
 
 private:
     /// 发 clientHandshakeRequest 并解析回复。两条路（证书 TLS / PSK）共用这一段。

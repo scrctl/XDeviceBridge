@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `xdb connect HOST[:PORT]` and `xdb disconnect [HOST[:PORT]]`. Authenticate
+  an explicit Wi-Fi endpoint without discovery; retain its base connection in
+  Server across client/media-session exits. List connected endpoints alongside
+  discovered devices. Disconnect/loss/shutdown closes them without automatic
+  reconnect; preserve pairing records and DDI. Independent control sessions remain
+  exclusive per device.
+
 - Add optional `pair.display_brand` and `xdb pair --display-brand NAME` for
   application-specific host names/models. Keep `xdb` as the default and preserve
   display serials, pairing identifiers, keys and stored records. Advertise support

@@ -76,7 +76,8 @@ C ABI 的不兼容变化必须使用新的 ABI 主版本和动态库 SOVERSION�
 配对码事件使用 `event: "pin"`、`data: {"pin":"123456"}`，不得记入日志。
 服务端不会在响应、事件或发现结果中返回设备凭据。
 
-断开连接会在支持的位置取消配对／DDI 操作，并销毁当前连接的会话。
+关闭客户端套接字会在支持的位置取消配对／DDI 操作，并脱离该客户端的会话；
+其他附着客户端可继续保持会话。手动连接的基础隧道不随客户端会话清理关闭。
 取消或失败的操作可能已经改变设备状态。
 客户端可从另一线程中断套接字，须等请求结束后才能销毁客户端。
 事件回调不能重入或销毁自己的客户端。
@@ -92,6 +93,8 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `server.info` | 无 | 协议号、服务端版本和进程 ID |
 | `server.stop` | 无 | 回复后请求关闭；取消全部会话 |
 | `devices` | `transport`：auto/usb/wifi；`timeout_ms`：0..60000 | 设备、候选项、警告 |
+| `connect` | `address`，可选 `port`、`udid`、`timeout_ms` | Server 持有的已认证 Wi-Fi 基础连接；不需要发现 |
+| `disconnect` | 可选 `address`、`port`、`udid` | 关闭匹配的手动连接并使附着会话失效；保留凭据和 DDI |
 | `pair` | `transport`：wifi/usb；可选 `udid`；`timeout_ms`：1..300000 | UDID 和复用状态；进度／PIN 事件 |
 | `ddi.download` | `os_version`，可选 `product_type`、`cache_directory`、`timeout_seconds` | 构建／缓存元数据；进度事件 |
 | `ddi.prepare` | `udid`，可选 `wifi`、`port`、`cache_directory`、`replace`、下载／安装超时秒数 | 准备状态；进度事件 |
@@ -116,6 +119,23 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 管理方法之外的操作需要设备会话。断开的套接字无法自行恢复；
 只有另一个附着连接仍保持会话时，新套接字才能 attach。
 多个连续操作应使用持久的库客户端或 `rpc-shell`。
+
+### 手动 Wi-Fi 连接
+
+`connect`／`disconnect` 从 1.2 起提供，通信协议仍为 1；通过
+`server.info.capabilities.manual_connections` 探测。`connect` 必须使用已有配对记录，
+成功后由 Server 保留认证后的隧道，不执行新配对或 DDI 准备。
+已知 IP 不需要 mDNS；未指定 UDID 时仅允许选择唯一可用本地记录。
+默认手机 RemotePairing 端口为 49152，与 CLI `--port` 指定的本机 Server 端口无关。
+
+设备会话可复用手动连接，最后一个附着客户端关闭时释放媒体／输入服务，保留空闲隧道。
+同一设备仍只有一个独立控制会话。`devices` 按 UDID 合并发现与手动连接，后者在没有
+广播时也列为 connected，附 `manual_connection:{address,port}`。
+`disconnect` 不带筛选条件时关闭全部手动连接；指定端点与 UDID 时都必须匹配。
+传输掉线或关闭 Server 也会关闭手动连接，不自动重连、不持久化连接地址。
+传输掉线由空闲 TCP keepalive／实际 I/O 检测，检测耗时依操作系统而定。
+关闭失效会话后可以显式重新 connect/open；旧 attachment 不再有效。
+重新配对或管理 DDI 前须先断开手动连接。
 
 ## 几何与媒体所有权
 

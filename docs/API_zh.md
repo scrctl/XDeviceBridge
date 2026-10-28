@@ -39,7 +39,7 @@
 
 | 状态 | 可调用的方法 |
 | --- | --- |
-| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、pair、ddi.download、ddi.prepare、ddi.status、ddi.remove、connection.open、connection.attach、connection.close |
+| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、pair、connect、disconnect、ddi.download、ddi.prepare、ddi.status、ddi.remove、connection.open、connection.attach、connection.close |
 | 已拥有或附着设备会话 | 上述方法及 device/display/input/app/clipboard/media 方法；同一连接再次 open/attach 会失败 |
 | 已通过 connection.close 脱离 | 可再次调用管理方法；open/attach 可建立新的关联 |
 | 已中断、传输失败或已销毁 | 丢弃客户端，使用新句柄重新连接 |
@@ -48,7 +48,8 @@
 共享会话。再次打开相同 UDID 返回 `device_busy`。
 附着客户端具有相同控制权限，不是只读订阅者。
 会话持续到**最后一个**附着连接关闭；之后结束媒体、尝试释放按住的输入并释放设备租约。
-若手机或传输已经失败，清理不能保证释放报告成功送达。
+由手动 `connect` 保留的基础连接不随该清理关闭。若手机或传输已经失败，
+清理不能保证释放报告成功送达。
 
 附着连接共享媒体配置。应由一个控制客户端修改媒体状态，按需另设音频读取和视频轮询客户端。
 不要让多个音频客户端竞争读取：它们会消费同一个 PCM 队列。
@@ -62,7 +63,8 @@
 | invalid_params | JSON 字段缺失、类型错误、数值越界或显式参数校验失败。修正请求；连接可能仍可使用。 |
 | cancelled | 后端分发前检测到取消；断连期间的取消也可能表现为 EOF／无响应。 |
 | operation_failed | 设备、发现／连接、配对、DDI、编解码、录制或其他后端失败。message 说明本次原因，尚无稳定子错误码。 |
-| device_busy | 其他会话或配对操作持有设备租约。先关闭该会话及其附着连接。 |
+| device_busy | 其他会话／操作持有设备租约，或手动连接阻止管理操作。先关闭会话／附着连接，或 disconnect 手动连接。 |
+| not_paired | connect 没有可用的本地 Wi-Fi 凭据；请先配对。 |
 | invalid_state | 当前连接或媒体状态不能执行该方法。修正调用顺序。 |
 | invalid_session | attachment 已失效或未知。重新打开会话。 |
 | not_connected | 需要设备会话的方法尚未 open/attach。先建立关联。 |
@@ -98,6 +100,9 @@
 `capabilities.pairing_display_brand:true` 表示支持 `pair.display_brand`。
 缺少此能力字段时按不支持处理；旧服务端可能忽略未知请求字段。
 
+`capabilities.manual_connections:true` 表示支持 1.2 新增的 `connect`／`disconnect`。
+旧服务端可能返回 `unknown_method`；通信协议和 C ABI 仍为 1。
+
 ### `server.stop`
 
 不需要参数或设备会话。先发送结果 `{}`，再请求关闭服务。
@@ -106,6 +111,9 @@
 内嵌服务的持有方仍须调用 `xdb_server_stop` 释放服务句柄。
 
 ### `devices`
+
+手动连接按 UDID 与发现结果合并。即使没有广播也按 `connected` 列出，
+包含 `manual_connection:{address,port}` 和对应 Wi-Fi 候选；仍遵循传输方式筛选。
 
 | 参数 | 类型／默认值 |
 | --- | --- |
@@ -130,6 +138,37 @@ USB 地址／接口可为空，端口可为零；Wi-Fi IPv6 地址可能包含�
 `paired` 表示完整且匹配的本地凭据。候选配对原因包括
 `record_present`、`incomplete_record`、`identifier_hint`、`ambiguous`、
 `invalid_advertisement`、`crypto_error`、`unknown`；应容忍未来新增的原因值。
+
+### `connect`
+
+不要求设备会话。认证明确指定的 Wi-Fi 端点，并由 Server 保留基础连接；
+不执行发现、重新配对或 DDI 准备。
+
+| 参数 | 类型／默认值 |
+| --- | --- |
+| address | **必填**字符串：设备 IP 或主机名；接受 HOST[:PORT]／[IPv6%scope]:PORT |
+| port | 可选整数 1..65535，覆盖端点中的端口；默认 49152，即手机 RemotePairing 端口 |
+| udid | 可选字符串：选择可用的本地配对记录；存在多台设备的记录时必须指定 |
+| timeout_ms | 整数 1..300000；连接和认证默认限时 30000 毫秒 |
+
+返回 `{udid:string,address:string,port:integer,reused:bool}`。新连接成功表示已经完成
+pair-verify、TLS 隧道和 RSD 建连；仅找到本地记录不代表连接成功。
+对同一 UDID 重复 connect 会复用已有连接，返回其实际端点，即使本次传了另一个地址，
+也不会把现有连接迁移到该地址。
+
+调用方退出后基础连接由 Server 持有。设备会话复用它；最后一个附着客户端退出时
+释放媒体和 HID 服务，基础连接继续空闲保留，不主动采集媒体。同一设备仍只允许一个
+独立控制会话，第二个返回 `device_busy`。传输掉线、`disconnect` 或 Server 关闭时
+使附着会话失效并关闭连接；不自动重连，重启后也不恢复。空闲 TCP keepalive 用于
+检测没有 FIN 的静默断网，检测时间受操作系统影响，不是固定的 RPC 截止时间。
+
+### `disconnect`
+
+不要求设备会话。可选 `address`、`port` 与 `connect` 语法一致；可选 `udid` 按身份筛选。
+不传任何筛选条件时，关闭这个 Server 的**全部手动连接**；同时指定端点与 UDID 时必须都匹配。
+返回 `{disconnected:[{udid:string,address:string,port:integer}]}`；没有匹配连接时返回空数组，
+也视为成功。使用这些连接的活跃会话失效，之后设备调用返回 `not_connected`，旧 attachment
+也无法复用。保留配对记录、DDI 和其他会话。重新配对或管理 DDI 前须先关闭／断开手动连接。
 
 ### `pair`
 
@@ -238,6 +277,9 @@ verification／identifier／version 为空，另含 `changed:bool`。
 
 ### `connection.open`
 
+auto／wifi 会复用所选 UDID 的已有手动 Wi-Fi 连接。UDID 为空时，先选择唯一手动连接，
+没有时才执行发现。显式 usb 要求先 disconnect 该设备的手动连接。
+
 | 参数 | 类型／默认值 |
 | --- | --- |
 | udid | 字符串，**必填**；空值请求自动选择唯一的已识别设备 |
@@ -261,6 +303,7 @@ attachment 是活跃会话能力凭据，不是持久设备标识或设备凭据
 
 ### `connection.close`
 
+最后一个附着客户端退出后，手动连接的基础隧道仍空闲保留在 Server。
 无参数，返回 `{}`，可重复调用。只脱离**当前套接字**。
 其他附着连接可继续保持会话、媒体和按住的输入。
 需要报告录制收尾错误时，应先调用 media.finish 再关闭；析构清理会丢弃错误。

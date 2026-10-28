@@ -81,8 +81,10 @@ During a request, zero or more messages of the form
 Pairing PIN events use `event: "pin"`, `data: {"pin":"123456"}` and must not be logged.
 The server does not send credentials in responses, events or discovery results.
 
-Disconnecting cancels pairing/DDI where supported and destroys the connection's
-session. Cancelled or failed operations may have already changed device state.
+Closing a client socket cancels pairing/DDI where supported and detaches its
+session; other attachments may keep that session alive. A manually connected
+base tunnel survives client-session cleanup. Cancelled or failed operations may
+have already changed device state.
 The client can interrupt its socket from another thread; wait for request completion
 before destroying that client. Event callbacks cannot reenter or destroy their client.
 
@@ -97,6 +99,8 @@ is a quick summary rather than the full method contract.
 | `server.info` | none | Protocol, server version and process ID |
 | `server.stop` | none | Requests shutdown after replying; all sessions are cancelled |
 | `devices` | `transport`: auto/usb/wifi; `timeout_ms`: 0..60000 | Devices, candidates, warnings |
+| `connect` | `address`, optional `port`, `udid`, `timeout_ms` | Authenticated Server-owned Wi-Fi base connection; no discovery required |
+| `disconnect` | optional `address`, `port`, `udid` | Closes matching manual connections and invalidates attached sessions; preserves records/DDI |
 | `pair` | `transport`: wifi/usb; optional `udid`; `timeout_ms`: 1..300000 | UDID and reused status; progress/PIN events |
 | `ddi.download` | `os_version`, optional `product_type`, `cache_directory`, `timeout_seconds` | Build/cache metadata; progress events |
 | `ddi.prepare` | `udid`, optional `wifi`, `port`, `cache_directory`, `replace`, download/install timeout seconds | Prepared status; progress events |
@@ -121,6 +125,26 @@ is a quick summary rather than the full method contract.
 Except management methods, operations require a device session. A disconnected socket cannot resume itself; a new socket can attach only while
 another attachment keeps the session alive. Use one long-lived library client
 or `rpc-shell` for a multi-operation session.
+
+### Manual Wi-Fi connections
+
+`connect` / `disconnect` are available since 1.2 without changing protocol 1;
+check `server.info.capabilities.manual_connections`. `connect` requires a usable
+local record and keeps the authenticated tunnel in Server. It does not pair or
+prepare DDI. An explicit IP needs no mDNS. Without UDID, exactly one usable local
+record must exist. The default device RemotePairing port is 49152, distinct from
+the local Server port selected by CLI `--port`.
+
+Device sessions reuse manual connections; closing the last attachment releases
+media/input services and preserves the idle tunnel. There is still only one
+independent control session per device. `devices` merges manual connections and
+discovery by UDID; manual connections remain connected without an advertisement
+and include `manual_connection:{address,port}`. `disconnect` without selectors
+closes all manual connections; an endpoint and UDID together must both match.
+Transport loss or Server shutdown closes them too, with no automatic reconnect
+or persisted endpoint. Idle TCP keepalive/actual I/O detects loss; detection time
+depends on the OS. Close stale sessions before explicit connect/open; old
+attachments are invalid. Disconnect manual connections before pairing or DDI management.
 
 ## Geometry and media ownership
 

@@ -3,7 +3,10 @@
 #include <climits>
 #ifndef _WIN32
 #include <sys/time.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
+#else
+#include <mstcpip.h>
 #endif
 
 namespace xdb::transport {
@@ -64,6 +67,30 @@ constexpr int kNoSigPipe = MSG_NOSIGNAL;
 #else
 constexpr int kNoSigPipe = 0;
 #endif
+
+bool Socket::enable_keepalive(std::string &err) {
+    const int on = 1;
+    if (::setsockopt(fd_, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char *>(&on), sizeof(on)) != 0)
+        return err = "Cannot enable TCP keepalive: " + socket_error_message(), false;
+#ifdef _WIN32
+    tcp_keepalive values{1, 30000, 10000};
+    DWORD returned = 0;
+    if (::WSAIoctl(fd_, SIO_KEEPALIVE_VALS, &values, sizeof(values), nullptr, 0, &returned, nullptr, nullptr) != 0)
+        return err = "Cannot configure TCP keepalive: " + socket_error_message(), false;
+#else
+    const int idle = 30, interval = 10, count = 3;
+#ifdef __APPLE__
+    constexpr int idle_option = TCP_KEEPALIVE;
+#else
+    constexpr int idle_option = TCP_KEEPIDLE;
+#endif
+    if (::setsockopt(fd_, IPPROTO_TCP, idle_option, &idle, sizeof(idle)) != 0 ||
+        ::setsockopt(fd_, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval)) != 0 ||
+        ::setsockopt(fd_, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count)) != 0)
+        return err = "Cannot configure TCP keepalive: " + socket_error_message(), false;
+#endif
+    return true;
+}
 
 bool Socket::write_all(const void *data, size_t len, std::string &err) {
     const auto *p = static_cast<const uint8_t *>(data);

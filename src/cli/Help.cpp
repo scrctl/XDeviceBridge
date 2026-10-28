@@ -16,7 +16,7 @@ struct CommandHelp {
 
 constexpr CommandHelp commands[] = {
     {"devices", "xdb devices [-l] [--usb|--wifi] [--timeout MS] [--json]",
-     "List discovered devices without opening device sessions.\n\n"
+     "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
      "  --usb          Discover USB devices only\n"
      "  --wifi         Discover Wi-Fi devices only\n"
@@ -25,9 +25,25 @@ constexpr CommandHelp commands[] = {
      "States:\n"
      "  discovered     Discovered without a verified local Wi-Fi record\n"
      "  paired         A local record matches discovery; connectivity is unverified\n"
-     "  connected      The server holds an authenticated device session\n\n"
+     "  connected      The server holds an authenticated connection or device session\n\n"
      "Pairing records do not prove connectivity. Use -l for candidate details.\n\n"
      "Examples:\n  xdb devices\n  xdb devices -l --wifi\n"},
+    {"connect", "xdb [-s UDID] connect HOST[:PORT] [--timeout MS] [--json]",
+     "Authenticate a paired Wi-Fi device and keep its connection in the server.\n\n"
+     "  HOST[:PORT]    Device RemotePairing endpoint (default port: 49152)\n"
+     "  --timeout MS   Connection timeout (default: 30000; range: 1..300000)\n\n"
+     "No multicast discovery is needed for an explicit IP. A sole usable local\n"
+     "pairing record is selected without -s; multiple records require -s UDID.\n"
+     "The connection survives CLI exit and can be reused by device sessions.\n"
+     "It starts no media and does not pair or prepare DDI. Repeat connect is idempotent.\n"
+     "Disconnect, transport loss or server exit closes it. There is no auto-reconnect.\n\n"
+     "Examples:\n  xdb connect 192.168.1.10\n  xdb -s UDID connect '[fe80::1%en0]:49152'\n"},
+    {"disconnect", "xdb [-s UDID] disconnect [HOST[:PORT]] [--json]",
+     "Close manually connected Wi-Fi devices and their active device sessions.\n\n"
+     "With no endpoint or -s, disconnect all manually connected devices.\n"
+     "Pairing records and DDI are preserved. Already disconnected is success.\n"
+     "An endpoint and -s together must both match.\n\n"
+     "Examples:\n  xdb disconnect 192.168.1.10\n  xdb -s UDID disconnect\n  xdb disconnect\n"},
     {"pair", "xdb [-s UDID] pair [--wifi|--usb] [--display-brand NAME] [--timeout MS] [--json]",
      "Pair with an iOS device. Wi-Fi pairing is the default.\n\n"
      "  --wifi         Advertise this computer for Wi-Fi pairing\n"
@@ -50,7 +66,7 @@ constexpr CommandHelp commands[] = {
      "Without --cache-dir, downloads use temporary storage.\n"
      "remove unmounts Classic/Personalized images or uninstalls the DDI Cryptex.\n"
      "It verifies removal and preserves pairing records and host caches.\n"
-     "Close active device sessions before managing DDI.\n"
+     "Close active sessions and disconnect manual connections before managing DDI.\n"
      "A sole identified device is selected when -s is omitted.\n\n"
      "Examples:\n  xdb ddi status\n  xdb ddi remove --wifi\n"
      "  xdb -s UDID ddi prepare --wifi --cache-dir /absolute/ddi-cache\n"},
@@ -59,7 +75,7 @@ constexpr CommandHelp commands[] = {
      "  --usb             Connect through USB only\n"
      "  --wifi [ADDRESS]  Use paired Wi-Fi discovery, or an explicit device address\n\n"
      "Prepare pairing and DDI before capture. Without a transport option,\n"
-     "the device session prefers USB and falls back to paired Wi-Fi.\n"
+     "the device session reuses a manual connection, or prefers USB then paired Wi-Fi.\n"
      "A sole identified device is selected when -s is omitted.\n\n"
      "Examples:\n  xdb screenshot screen.png\n  xdb -s UDID screenshot screen.png --wifi\n"},
     {"start-server", "xdb start-server [--data-dir DIR] [--port PORT]",
@@ -104,6 +120,8 @@ void print_help(std::span<const std::string> command) {
                      "Commands:\n"
                      "  devices [-l]        List discovered devices\n"
                      "  pair                Pair with an iOS device\n"
+                     "  connect HOST[:PORT] Keep a paired Wi-Fi connection in the server\n"
+                     "  disconnect [HOST]   Close manual Wi-Fi connections\n"
                      "  ddi prepare         Download and mount a developer disk image\n"
                      "  ddi status          Query developer image installation/mount state\n"
                      "  ddi remove          Remove the developer image from the device\n"

@@ -29,10 +29,22 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     cryptex_installed = True
     ddi_error = False
     branding_supported = True
+    manual_connected = False
 
     def handle(name, params):
+        global manual_connected
         if name == 'server.info':
             return dict(capabilities=dict(pairing_display_brand=branding_supported)), b''
+        if name in ('connect', 'disconnect'):
+            with server.lock:
+                server.calls.append((name, params))
+            if name == 'connect':
+                result = dict(udid=params.get('udid', 'mock-iphone'), address=params['address'],
+                              port=params.get('port', 49152), reused=manual_connected)
+                manual_connected = True
+                return result, b''
+            manual_connected = False
+            return dict(disconnected=[dict(udid='mock-iphone', address='10.0.0.7', port=49152)]), b''
         if name == 'pair':
             with server.lock:
                 server.calls.append((name, params))
@@ -69,7 +81,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'Commands:' in summary and 'Options:' in summary
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
-                    ('screenshot',), ('start-server',), ('kill-server',), ('server',),
+                    ('screenshot',), ('connect',), ('disconnect',), ('start-server',), ('kill-server',), ('server',),
                     ('rpc',), ('rpc-shell',)):
         args = command if command == ('-h',) else (*command, '--help')
         assert 'Usage:' in run(*args).stdout
@@ -92,6 +104,24 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr
     assert server.methods() == before_help
+    for args in (('connect',), ('connect', '10.0.0.7:0'), ('connect', '[::1'),
+                 ('connect', '10.0.0.7:abc'), ('connect', '10.0.0.7:65536'),
+                 ('connect', '10.0.0.7:'), ('connect', '[::1]:-1'),
+                 ('connect', '10.0.0.7', '--usb'), ('connect', '10.0.0.7', '--timeout', '0')):
+        run(*args, ok=False)
+    assert server.methods() == before_help, 'invalid endpoint contacted the server'
+    assert 'Connected to 10.0.0.7:49152' in run('connect', '10.0.0.7').stdout
+    assert server.calls[-1] == ('connect', dict(address='10.0.0.7', port=49152))
+    assert 'Already connected to' in run('connect', '10.0.0.7:49152').stdout
+    run('-s', 'selected', 'connect', '[fe80::1%4]:50000', '--timeout', '1000')
+    assert server.calls[-1] == ('connect', dict(udid='selected', address='fe80::1%4', port=50000, timeout_ms=1000))
+    run('connect', 'fe80::1%4')
+    assert server.calls[-1] == ('connect', dict(address='fe80::1%4', port=49152))
+    assert 'Disconnected' in run('disconnect', '10.0.0.7').stdout
+    run('-s', 'selected', 'disconnect')
+    assert server.calls[-1] == ('disconnect', dict(udid='selected'))
+    run('disconnect')
+    assert server.calls[-1] == ('disconnect', {})
     run('pair', '--display-brand', 'scrctl')
     assert any(name == 'pair' and p['display_brand'] == 'scrctl' for name, p in server.calls)
     branding_supported = False

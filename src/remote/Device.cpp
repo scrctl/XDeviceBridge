@@ -334,6 +334,10 @@ std::optional<Device> Device::establish_wifi_bounded(const std::string &address,
     return dev;
 }
 
+bool Device::enable_idle_keepalive(std::string &err) {
+    return tunnel_ && tunnel_->enable_keepalive(err);
+}
+
 void Device::interrupt_startup() {
     if (tunnel_) tunnel_->shutdown();
 }
