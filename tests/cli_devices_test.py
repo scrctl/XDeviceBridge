@@ -81,7 +81,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     before_help = server.methods()
     version = run('--version').stdout
     assert version.startswith('XDeviceBridge ') and 'Running on ' in version
-    assert f'Installed as {exe}\n' in version
+    installed = next(line.removeprefix('Installed as ') for line in version.splitlines()
+                     if line.startswith('Installed as '))
+    assert Path(installed).samefile(exe), (installed, exe)
     assert run('version').stdout == version
     summary = run('--help').stdout
     assert run('help').stdout == summary
