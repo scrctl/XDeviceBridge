@@ -716,3 +716,16 @@ zero contacts. Browser events were ordered by a client-side sequence number;
 parallel HTTP POST arrival order is not the device's touch event order.
 
 This records acceptance on one device, not all iOS versions or hardware models.
+
+Desktop scrctl's actual LiveSource and Presenter were linked into a temporary
+acceptance driver. SDL queued Ctrl/Shift/Ctrl+Shift mouse gestures reached the
+same iPhone as two contacts with the expected reflection axes. Five SDL touch
+contacts preserved identities through movement and individual UP; focus loss
+released both remaining contacts. The Mac has no physical touchscreen, so this
+validates the SDL event path, not host touch hardware.
+
+On Xiaomi 13 Ultra/API 36, scrctl-android's actual Activity and MirrorView received
+five synthetic Android MotionEvent pointers. Safari observed five active device
+contacts, stable identities through movement and individual UP, then zero;
+a separate two-finger ACTION_CANCEL also ended at zero. Existing pairing data
+was retained. This is View-to-device acceptance, not a manual five-finger trial.
