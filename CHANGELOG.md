@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.0 — 2026-10-30
+
+- Add local `version` / `--version` output and a `help` command alias.
+- Add `XDB_SERIAL` as the default device selector, with explicit `-s` taking
+  precedence, and adb-style `-d` / `-e` USB and Wi-Fi selectors.
+- Add `get-state` and `get-serialno` for scripts. Preserve xdb's `discovered`,
+  `paired` and `connected` states; the serial query returns the device UDID.
+- Add `wait-for-device` for an authenticated read-only development connection.
+  Support direct-IP probing with a UDID, optional deadlines, timeout exit 124 and
+  Ctrl+C cancellation exit 130. The probe starts no media or persistent connection.
+- Add `mdns check` and `mdns services`, with backend availability, warnings and
+  discovered service endpoints. These diagnostics do not open a device session.
+- Distinguish missing pairing records, explicit authorization rejection and
+  locked devices, preserving transport errors and showing the appropriate next
+  step. Do not treat Wi-Fi busy/backoff responses as rejected pairing credentials.
+- Apply the existing threading compatibility options to the CLI so its wait
+  command builds with older Apple libc++.
+
+C ABI 1 and local RPC protocol 1 remain unchanged. Existing pairing records are
+retained. mDNS diagnostics require the new Server capability; older servers return
+a clear upgrade message.
+
 ## 1.4.0 — 2026-10-29
 
 - Wait for a bounded TCP acknowledgement after final input cleanup before tearing
