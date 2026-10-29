@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 — 2026-10-29
 
 - Wait for a bounded TCP acknowledgement after final input cleanup before tearing
   down the last device session, so queued touch releases reach the device.

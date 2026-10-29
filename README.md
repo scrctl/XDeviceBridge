@@ -14,6 +14,8 @@ see the [validation boundaries](docs/VALIDATION.md) and [changelog](CHANGELOG.md
 Version 1.1 adds native system discovery with shared subscriptions on desktop,
 an Android NSD adapter, and DDI status/removal commands. Version 1.2 adds manual
 IP connections retained by Server and configurable pairing display brands.
+Version 1.3 adds shared control sessions; 1.4 adds up to five touch contacts
+and reliable final input release before session teardown.
 C ABI 1 and protocol 1 remain unchanged. Restart an existing Server after upgrading to activate these
 changes; existing pairing records are retained.
 
