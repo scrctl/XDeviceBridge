@@ -143,7 +143,7 @@ void print_help(std::span<const std::string> command) {
                      "  rpc                 Send a JSON RPC request\n"
                      "  rpc-shell           Open the JSON debugging console\n\n"
                      "Options:\n"
-                     "  -s, --serial UDID   Select a device\n"
+                     "  -s, --serial UDID   Select a device (overrides XDB_SERIAL)\n"
                      "  --port PORT         Server port (default: 17423; env: XDB_PORT)\n"
                      "  --data-dir DIR      Pairing data directory for a new server\n"
                      "  --json              Print JSON responses\n"

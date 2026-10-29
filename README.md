@@ -125,6 +125,9 @@ Help does not start or connect to a server.
 Use `xdb --version` or `xdb version` to show the local executable version,
 installation path and running platform. Use `xdb rpc server.info` for the running Server version.
 
+Set `XDB_SERIAL` to use a default device UDID. Explicit `-s UDID` or `--serial UDID`
+overrides it. Without either, device commands select a sole available device.
+
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.
 It listens only on loopback (default port 17423); local clients need no access token.

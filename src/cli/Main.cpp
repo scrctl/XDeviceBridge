@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
         std::string dir, output, serial, wifi_address, cache;
         std::optional<std::string> display_brand;
         bool wifi = false, usb = false, replace = false, json_output = false, long_output = false;
-        bool show_help = false, show_version = false, explicit_port = false;
+        bool show_help = false, show_version = false, explicit_port = false, explicit_serial = false;
         int timeout = -1;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
@@ -141,9 +141,10 @@ int main(int argc, char **argv) {
                     dir = argv[i];
                 else if (a == "--output")
                     output = argv[i];
-                else if (a == "-s" || a == "--serial")
+                else if (a == "-s" || a == "--serial") {
                     serial = argv[i];
-                else if (a == "--timeout")
+                    explicit_serial = true;
+                } else if (a == "--timeout")
                     timeout = number(argv[i], 0, 300000);
                 else if (a == "--display-brand")
                     display_brand = argv[i];
@@ -168,6 +169,8 @@ int main(int argc, char **argv) {
         }
         if (!explicit_port && *env("XDB_PORT"))
             port = uint16_t(number(env("XDB_PORT"), 1, 65535));
+        if (!explicit_serial)
+            serial = env("XDB_SERIAL");
         if (wifi && usb)
             throw std::invalid_argument("Choose --usb or --wifi");
         if (args.empty())

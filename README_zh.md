@@ -121,6 +121,9 @@ C ABI 定义位于 [xdb.h](include/xdb/xdb.h)，通信协议见[通信协议说�
 使用 `xdb --version` 或 `xdb version` 查看本地程序版本、安装路径和运行平台。
 运行中的 Server 版本可用 `xdb rpc server.info` 查询。
 
+可通过 `XDB_SERIAL` 设置默认设备 UDID；显式传入的 `-s UDID` 或 `--serial UDID` 优先。
+两者均未指定时，设备命令自动选择唯一可用设备。
+
 桌面端 CLI 和 SDK 会在需要时自动启动后台 Server。客户端退出后，Server 继续运行，
 供其他客户端复用。它只监听本机回环地址，默认端口为 `17423`；本机客户端不需要访问令牌。
 服务不按本机进程或操作系统用户鉴权。能够连接该端口的本机进程可控制设备、访问剪贴板

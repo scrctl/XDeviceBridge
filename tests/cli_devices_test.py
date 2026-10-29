@@ -72,8 +72,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         return original(name, params)
     server.handle_call = handle
 
-    def run(*args, ok=True):
+    def run(*args, ok=True, serial=''):
         result = subprocess.run([exe, '--port', str(server.server_address[1]), *args],
+                                env=dict(os.environ, XDB_SERIAL=serial),
                                 text=True, capture_output=True, encoding='utf-8', timeout=5)
         assert (result.returncode == 0) == ok, (args, result.stdout, result.stderr)
         return result
@@ -202,6 +203,12 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     devices[0]['state'] = 'paired'
     run('ddi', 'prepare', '--wifi')
     assert any(name == 'ddi.prepare' and p['udid'] == 'mock-iphone' for name, p in server.calls)
+    run('ddi', 'status', serial='environment-iphone')
+    assert server.calls[-1] == ('ddi.status', dict(udid='environment-iphone'))
+    run('-s', 'selected', 'ddi', 'status', serial='environment-iphone')
+    assert server.calls[-1] == ('ddi.status', dict(udid='selected'))
+    run('--serial', '', 'ddi', 'status', serial='environment-iphone')
+    assert server.calls[-1] == ('ddi.status', dict(udid='mock-iphone'))
     before_ddi = len(server.calls)
     assert 'DDI mounted: Personalized (mock-iphone)' in run('ddi', 'status', '--wifi').stdout
     assert 'DDI removed: mock-iphone' in run('ddi', 'remove', '--wifi').stdout
