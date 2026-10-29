@@ -93,7 +93,12 @@ Certificate unrelated_certificate() {
         EVP_PKEY_keygen(key_context.get(), &raw_key) != 1) return Certificate(nullptr, X509_free);
     std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key(raw_key, EVP_PKEY_free);
     std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> subject(X509_NAME_new(), X509_NAME_free);
-    if (!subject || X509_set_version(certificate.get(), 2) != 1 ||
+    // OpenSSL 4.1 no longer matches CN by default: keep this a hostname-valid,
+    // untrusted certificate so the test specifically exercises trust rejection.
+    std::unique_ptr<X509_EXTENSION, decltype(&X509_EXTENSION_free)> san(
+        X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name, "DNS:gs.apple.com"), X509_EXTENSION_free);
+    if (!subject || !san || X509_add_ext(certificate.get(), san.get(), -1) != 1 ||
+        X509_set_version(certificate.get(), 2) != 1 ||
         ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()), 1) != 1 ||
         !ASN1_TIME_set(X509_getm_notBefore(certificate.get()), fixture_time - 3600) ||
         !ASN1_TIME_set(X509_getm_notAfter(certificate.get()), fixture_time + 3600) ||
