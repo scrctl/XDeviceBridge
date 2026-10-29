@@ -241,6 +241,21 @@ int main() {
     // "缺哪个服务"、不报"目录里有什么"，远程就分不开"没挂 DDI"与"这版系统没这个服务"。
     std::printf("\n== 连接失败的措辞要把方向指对 ==\n");
     {
+        // Invalid local records are detected before any network I/O, without calling them device rejections.
+        using xdb::transport::DeviceError;
+        xdb::transport::IoBudget budget;
+        DeviceError failure = DeviceError::unauthorized;
+        std::string error;
+        xdb::wifi::PairRecord incomplete;
+        auto missing = xdb::remote::Device::establish_wifi_bounded("invalid host", incomplete, budget,
+                                                                  error, false, 49152, &failure);
+        check(!missing && failure == DeviceError::not_paired && error.find("xdb -e pair") != std::string::npos,
+              "incomplete local record is not an explicit device rejection");
+        xdb::transport::IoBudget cancelled({std::chrono::milliseconds(1), [] { return true; }});
+        failure = DeviceError::unauthorized;
+        auto stopped = xdb::remote::Device::establish_wifi_bounded("invalid host", incomplete, cancelled,
+                                                                  error, false, 49152, &failure);
+        check(!stopped && failure == DeviceError::other, "cancellation clears previous authorization classification");
         using xdb::remote::proxy_failure_hint;
         const auto locked = proxy_failure_hint("StartService(x) 被拒: PasswordProtected");
         check(locked.find("locked") != std::string::npos &&

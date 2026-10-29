@@ -59,50 +59,65 @@ bool unit(double n) { return std::isfinite(n) && n >= 0 && n <= 1; }
 } // namespace
 std::optional<remote::Device> open_device(const std::string &udid, const std::string &wifi_address,
                                           std::string &error, uint16_t port, const Cancel &cancel,
-                                          const std::string &directory) {
+                                          const std::string &directory, transport::DeviceError *failure) {
+    using transport::DeviceError;
+    DeviceError wifi_failure = DeviceError::other, usb_failure = DeviceError::other;
+    if (failure) *failure = DeviceError::other;
     transport::IoBudget budget({std::chrono::seconds(30), cancel});
+    std::string usb_error;
     if (wifi_address.empty()) {
-        auto usb = remote::Device::establish_bounded(udid, budget, error, false, true);
-        if (usb)
-            return usb;
-        if (cancel())
-            return std::nullopt;
+        auto usb = remote::Device::establish_bounded(udid, budget, error, false, true, &usb_failure);
+        if (usb) return usb;
+        if (cancel()) return std::nullopt;
+        usb_error = std::move(error);
         error.clear();
     }
-    auto paired = records(directory, cancel);
-    auto record = std::find_if(paired.begin(), paired.end(), [&](const auto &r) {
-        return r.udid == udid && r.complete() && r.has_peer_identity();
-    });
-    if (record == paired.end()) {
-        error = "No usable pairing for the requested UDID";
-        return std::nullopt;
-    }
-    if (!wifi_address.empty() && wifi_address != "auto")
-        return remote::Device::establish_wifi_bounded(wifi_address, *record, budget, error, false, port);
-    remote::DiscoveryOptions options;
-    options.include_usb = false;
-    options.pairing_directory = directory;
-    options.should_cancel = cancel;
-    auto discovery = remote::discover_devices(options);
-    for (const auto &device : discovery.devices) {
-        if (device.udid != udid)
-            continue;
-        for (const auto &c : device.candidates) {
-            if (c.transport != remote::DiscoveryTransport::remote_pairing ||
-                c.pairing != remote::DiscoveryPairing::ready || c.address.empty())
-                continue;
-            auto connected =
-                remote::Device::establish_wifi_bounded(c.address, *record, budget, error, false, c.port);
-            if (connected)
-                return connected;
-            if (cancel())
-                return std::nullopt;
+    const auto try_wifi = [&]() -> std::optional<remote::Device> {
+        auto paired = records(directory, cancel);
+        auto record = std::find_if(paired.begin(), paired.end(), [&](const auto &r) {
+            return r.udid == udid && r.complete() && r.has_peer_identity();
+        });
+        if (record == paired.end()) {
+            error = "No usable local Wi-Fi pairing record for the requested UDID" +
+                    transport::device_error_hint(DeviceError::not_paired, true);
+            wifi_failure = DeviceError::not_paired;
+            return std::nullopt;
         }
+        if (!wifi_address.empty() && wifi_address != "auto")
+            return remote::Device::establish_wifi_bounded(wifi_address, *record, budget, error, false, port, &wifi_failure);
+        remote::DiscoveryOptions options;
+        options.include_usb = false;
+        options.pairing_directory = directory;
+        options.should_cancel = cancel;
+        auto discovery = remote::discover_devices(options);
+        for (const auto &device : discovery.devices) {
+            if (device.udid != udid) continue;
+            for (const auto &c : device.candidates) {
+                if (c.transport != remote::DiscoveryTransport::remote_pairing ||
+                    c.pairing != remote::DiscoveryPairing::ready || c.address.empty()) continue;
+                auto connected = remote::Device::establish_wifi_bounded(c.address, *record, budget, error,
+                                                                         false, c.port, &wifi_failure);
+                if (connected) return connected;
+                if (cancel()) return std::nullopt;
+            }
+        }
+        if (error.empty()) error = "No paired Wi-Fi device discovered";
+        return std::nullopt;
+    };
+    auto device = try_wifi();
+    if (device) return device;
+    if (!usb_error.empty()) {
+        error = "USB: " + usb_error + "; Wi-Fi: " + error;
+        // Mixed failures are not evidence that both transports are unauthorized.
+        if (wifi_failure == DeviceError::not_paired && usb_failure != DeviceError::other)
+            wifi_failure = usb_failure;
+        else if (usb_failure != DeviceError::other && usb_failure != wifi_failure)
+            wifi_failure = DeviceError::other;
     }
-    if (error.empty())
-        error = "No paired Wi-Fi device discovered";
+    if (failure && !cancel()) *failure = wifi_failure;
     return std::nullopt;
 }
+
 struct DeviceConnection {
     remote::Device device;
     std::string address;
@@ -759,7 +774,7 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
             value = remote::pair_usb_remote(o);
         }
         if (!value.ok)
-            return fail(value.error);
+            return Reply::failure(transport::device_error_code(value.error_code), value.error);
         Reply r;
         r.result = {{"udid", value.udid}, {"reused", value.reused}};
         return r;
@@ -799,10 +814,11 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         } release{registry_, o.serial};
         o.data_directory = directory_;
         o.wifi_port = uint16_t(bounded(p, "port", 49152, 1, 65535));
+        transport::DeviceError failure;
         if (method != "ddi.prepare") {
-            auto result = manage_ddi(o, method == "ddi.remove", error, cancel);
+            auto result = manage_ddi(o, method == "ddi.remove", error, cancel, &failure);
             if (!result)
-                return fail(error);
+                return Reply::failure(transport::device_error_code(failure), error);
             Reply r;
             r.result = std::move(*result);
             return r;
@@ -811,8 +827,8 @@ Reply Backend::handle_management(const std::string &method, const Json &p, const
         o.replace_ddi = p.value("replace", false);
         o.ddi_download_timeout = bounded(p, "download_timeout_seconds", 300, 1, 3600);
         o.ddi_install_timeout = bounded(p, "install_timeout_seconds", 300, 1, 3600);
-        if (!prepare_ddi(o, error, event, cancel))
-            return fail(error);
+        if (!prepare_ddi(o, error, event, cancel, &failure))
+            return Reply::failure(transport::device_error_code(failure), error);
         Reply r;
         r.result = {{"prepared", true}};
         return r;
@@ -861,7 +877,8 @@ Reply Backend::handle_persistent_connection(const std::string &method, const Jso
             return Reply::failure("ambiguous_device", "Multiple paired devices; select one with -s UDID");
         record = &candidate;
     }
-    if (!record) return Reply::failure("not_paired", "No usable local Wi-Fi pairing record; pair the device first");
+    if (!record) return Reply::failure("not_paired", "No usable local Wi-Fi pairing record" +
+        transport::device_error_hint(transport::DeviceError::not_paired, true));
     const auto result = [](const std::shared_ptr<DeviceConnection> &connection, bool reused) {
         Reply reply;
         reply.result = {{"udid", connection->device.udid()}, {"address", connection->address},
@@ -883,9 +900,10 @@ Reply Backend::handle_persistent_connection(const std::string &method, const Jso
     } release{registry_, record->udid};
     std::string error;
     const transport::IoBudget budget({std::chrono::milliseconds(timeout), cancel});
-    auto device = remote::Device::establish_wifi_bounded(endpoint->address, *record, budget, error, false, endpoint->port);
-    if (!device || !device->enable_idle_keepalive(error))
-        return Reply::failure("operation_failed", error);
+    transport::DeviceError failure;
+    auto device = remote::Device::establish_wifi_bounded(endpoint->address, *record, budget, error, false, endpoint->port, &failure);
+    if (!device) return Reply::failure(transport::device_error_code(failure), error);
+    if (!device->enable_idle_keepalive(error)) return Reply::failure("operation_failed", error);
     if (!budget.check(error)) return Reply::failure("cancelled", error);
     auto connection = std::make_shared<DeviceConnection>(std::move(*device), endpoint->address, endpoint->port);
     if (!connection->alive()) return Reply::failure("not_connected", "Device disconnected during authentication");
@@ -1066,15 +1084,16 @@ Reply Backend::handle_connection(const std::string &method, const Json &p, const
             if (mode == "wifi" && address.empty())
                 address = "auto";
             if (!connection) {
+                transport::DeviceError failure;
                 auto device =
                     mode == "usb"
                         ? remote::Device::establish_bounded(
-                              udid, transport::IoBudget({std::chrono::seconds(30), cancel}), error, false, true)
+                              udid, transport::IoBudget({std::chrono::seconds(30), cancel}), error, false, true, &failure)
                         : open_device(udid, address, error, uint16_t(bounded(p, "port", 49152, 1, 65535)), cancel,
-                                      directory_);
+                                      directory_, &failure);
                 if (!device) {
                     close();
-                    return fail(error);
+                    return Reply::failure(transport::device_error_code(failure), error);
                 }
                 connection = std::make_shared<DeviceConnection>(std::move(*device));
             }

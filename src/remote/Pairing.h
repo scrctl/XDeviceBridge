@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "transport/DeviceError.h"
 
 namespace xdb::transport { struct DeviceRecord; }
 namespace xdb::wifi {
@@ -34,6 +35,7 @@ struct PairingResult {
     std::string udid;
     std::string path;
     std::string error;
+    transport::DeviceError error_code = transport::DeviceError::other;
 };
 
 /// 经可信 USB 入口建立供无线连接使用的 RemotePairing 记录。

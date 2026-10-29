@@ -140,6 +140,8 @@ Both queries support these selectors, `-s`, `XDB_SERIAL`, `--timeout MS` and `--
 
 Use `xdb mdns check` to report the Server discovery backend and availability, or `xdb mdns services` to list received iOS services and endpoints. Both accept `--timeout MS` and `--json`, without authenticating or connecting to phones. No services does not imply an unavailable backend.
 
+Connection errors distinguish missing records, explicit pairing rejection and a locked device. For USB trust, unlock and confirm Trust before `xdb -d pair`; for missing/revoked Wi-Fi pairing, use `xdb -e pair`. Unlock a locked device and retry. Network, service and cryptographic failures never trigger automatic re-pairing.
+
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.
 It listens only on loopback (default port 17423); local clients need no access token.

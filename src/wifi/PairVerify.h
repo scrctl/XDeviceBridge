@@ -11,7 +11,7 @@
 namespace xdb::wifi {
 
 /// Paired 表示流程完成并安装主密钥；NotPaired 表示本地记录不完整或设备返回
-/// 配对错误。TransportFailure 是其余失败路径的默认值，也包括消息格式及密码学
+/// Authentication 配对错误。TransportFailure 是其余失败路径的默认值，也包括其他设备错误、消息格式及密码学
 /// 操作失败，不能仅凭此值判断网络故障或保证重试会成功。
 enum class VerifyOutcome { Paired, NotPaired, TransportFailure };
 

@@ -1032,6 +1032,19 @@ void test_pair_verify_shape() {
             check(channel.sequence() == (at_m2 ? 2 : 3), "失败阶段决定是否已发送 M3");
             no_keys(channel, io, result);
         }
+        for (const auto &value : {Bytes{}, Bytes{3}, Bytes{6}, Bytes{255}, Bytes{2, 2}}) {
+            const auto refusal = tlv_build({{TlvType::Error, value}});
+            MemStream io;
+            configure(io, Fault::None, at_m2 ? std::optional<Bytes>(refusal) : std::nullopt,
+                      at_m2 ? valid_m4 : refusal);
+            FramedCarrier carrier(io);
+            Rppairing channel(carrier);
+            std::string err;
+            const auto result = pair_verify(channel, record, err, false);
+            check(result.outcome == VerifyOutcome::TransportFailure && !err.empty(),
+                  "busy/backoff, unknown and malformed pairing errors do not imply revoked credentials");
+            no_keys(channel, io, result);
+        }
         for (const bool announce : {true, false}) {
             MemStream io;
             configure(io, Fault::None, at_m2 ? std::optional<Bytes>(denied) : std::nullopt,

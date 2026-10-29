@@ -18,10 +18,12 @@ struct PrepareOptions {
     bool replace_ddi = false;
     int ddi_download_timeout = 300, ddi_install_timeout = 300;
 };
-bool prepare_ddi(const PrepareOptions &, std::string &, const Event &, const Cancel &);
-std::optional<Json> manage_ddi(const PrepareOptions &, bool remove, std::string &, const Cancel &);
+bool prepare_ddi(const PrepareOptions &, std::string &, const Event &, const Cancel &,
+                 transport::DeviceError * = nullptr);
+std::optional<Json> manage_ddi(const PrepareOptions &, bool remove, std::string &, const Cancel &,
+                               transport::DeviceError * = nullptr);
 std::optional<remote::Device> open_device(const std::string &, const std::string &, std::string &, uint16_t,
-                                          const Cancel &, const std::string &);
+                                          const Cancel &, const std::string &, transport::DeviceError * = nullptr);
 struct DeviceConnection;
 struct Registry {
     std::mutex mutex;

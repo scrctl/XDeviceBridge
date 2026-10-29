@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "plist/Plist.h"
+#include "transport/DeviceError.h"
 #include "transport/TlsChannel.h"
 #include "transport/Usbmux.h"
 
@@ -34,7 +35,7 @@ public:
         std::chrono::milliseconds timeout, const std::function<bool()> &cancelled, std::string &err);
 
     static std::optional<Lockdown> establish_bounded(uint32_t device_id, std::string_view udid,
-        const IoBudget &budget, std::string &err);
+        const IoBudget &budget, std::string &err, DeviceError *failure = nullptr);
 
     /// 发一个 lockdown 请求并等回复。自动补 Label 字段。
     bool request(const plist::Value &req, plist::Value &reply, std::string &err);
@@ -49,10 +50,10 @@ public:
         uint16_t port = 0;
         bool requires_tls = false;
     };
-    std::optional<ServiceEndpoint> start_service(std::string_view name, std::string &err);
+    std::optional<ServiceEndpoint> start_service(std::string_view name, std::string &err, DeviceError *failure = nullptr);
 
     std::optional<ServiceEndpoint> start_service_bounded(std::string_view name,
-        const IoBudget &budget, std::string &err);
+        const IoBudget &budget, std::string &err, DeviceError *failure = nullptr);
 
     /// 配对记录里的 TLS 材料。开启 EnableServiceSSL 的服务连接要用同一套。
     [[nodiscard]] const PemIdentity &identity() const { return identity_; }

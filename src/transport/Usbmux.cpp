@@ -405,7 +405,7 @@ bool Usbmux::read_pair_record_for_service(std::string_view udid, std::vector<uin
     if (!round_trip_for_service(req, reply, timeout, cancelled, err)) return false;
     const auto *data = reply.find("PairRecordData");
     if (!data || data->kind != plist::Kind::Data || data->data.empty()) {
-        err = "ReadPairRecord response missing PairRecordData"; return false;
+        err = "ReadPairRecord response missing PairRecordData; unlock the device and confirm Trust, then run xdb -d pair"; return false;
     }
     out = data->data; return true;
 }
@@ -538,7 +538,7 @@ bool Usbmux::read_pair_record(std::string_view udid, std::vector<uint8_t> &out,
     if (data == nullptr || data->data.empty()) {
         const auto *e = reply.find("MessageType");
         err = "ReadPairRecord response missing PairRecordData (response " +
-              std::string(e ? e->as_string_or("?") : "?") + "); device may not trust this computer yet";
+              std::string(e ? e->as_string_or("?") : "?") + "); unlock the device and confirm Trust, then run xdb -d pair";
         return false;
     }
     out = data->data;

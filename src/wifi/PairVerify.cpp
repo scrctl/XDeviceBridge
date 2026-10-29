@@ -8,6 +8,18 @@ namespace xdb::wifi {
 PairVerifyResult pair_verify(Rppairing &channel, const PairRecord &host, std::string &err,
                              bool announce_failure) {
     PairVerifyResult result;
+    const auto rejected = [&](const Bytes &value) {
+        // Only Authentication (2) proves that these credentials were rejected.
+        // Busy/backoff, unknown codes and malformed Error TLVs must not trigger repair.
+        if (value.size() == 1 && value[0] == 2) {
+            result.outcome = VerifyOutcome::NotPaired;
+            err = "Device does not recognize this pairing record (not paired or pairing removed)";
+        } else {
+            err = value.size() == 1 ? "Device rejected pair-verify with Error=" + std::to_string(value[0])
+                                    : "Pair-verify response has an invalid Error TLV";
+        }
+        result.error = err;
+    };
     if (!host.complete()) {
         err = "Pairing record incomplete; cannot sign";
         result.outcome = VerifyOutcome::NotPaired;
@@ -64,17 +76,15 @@ PairVerifyResult pair_verify(Rppairing &channel, const PairRecord &host, std::st
         result.error = err;
         return result;
     }
-    // M2 已含 Error 时不再发送 PV-Msg03，返回 NotPaired，并按选项尽力通知失败。
+    // M2 已含 Error 时不再发送 PV-Msg03，拒绝本次验证，并按选项尽力通知失败。
     // 已测设备在此继续接收 Msg03 会关闭连接，兼容约束见 docs §25.6。
-    if (tlv_get(second, TlvType::Error) != nullptr) {
+    if (const auto *error = tlv_get(second, TlvType::Error)) {
         if (announce_failure) {
             std::string ignored;
             json::Value body = j_obj({{"pairVerifyFailed", j_obj({})}});
             channel.send_plain(j_obj({{"event", j_obj({{"_0", std::move(body)}})}}), ignored);
         }
-        err = "Device does not recognize this pairing record (not paired or pairing removed)";
-        result.outcome = VerifyOutcome::NotPaired;
-        result.error = err;
+        rejected(*error);
         return result;
     }
     const Bytes *second_state = tlv_get(second, TlvType::State);
@@ -154,17 +164,15 @@ PairVerifyResult pair_verify(Rppairing &channel, const PairRecord &host, std::st
         result.error = err;
         return result;
     }
-    if (tlv_get(final_fields, TlvType::Error) != nullptr) {
-        // 设备返回配对错误，按选项发送 pairVerifyFailed 并返回 NotPaired。
+    if (const auto *error = tlv_get(final_fields, TlvType::Error)) {
+        // 设备返回配对错误，按选项发送 pairVerifyFailed，并按 Error 分类。
         // 调用方可据此检查本地记录与设备信任状态，不应将此结果等同于网络超时。
         if (announce_failure) {
             std::string ignored;
             json::Value body = j_obj({{"pairVerifyFailed", j_obj({})}});
             channel.send_plain(j_obj({{"event", j_obj({{"_0", std::move(body)}})}}), ignored);
         }
-        err = "Device does not recognize this pairing record (not paired or pairing removed)";
-        result.outcome = VerifyOutcome::NotPaired;
-        result.error = err;
+        rejected(*error);
         return result;
     }
     const Bytes *final_state = tlv_get(final_fields, TlvType::State);

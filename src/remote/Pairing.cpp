@@ -72,11 +72,13 @@ struct UsbPairingChannel {
 };
 
 std::unique_ptr<UsbPairingChannel> open_pairing_channel(const std::string &udid,
-                                                     const UsbPairingOptions &options, std::string &error) {
+                                                     const UsbPairingOptions &options, std::string &error,
+                                                     transport::DeviceError *failure) {
+    if (failure) *failure = transport::DeviceError::other;
     if (cancelled(options, error)) return nullptr;
     transport::IoBudget budget({std::chrono::seconds(30), options.should_cancel});
     auto opened = std::make_unique<UsbPairingChannel>();
-    opened->device = Device::establish_bounded(udid, budget, error, false, true);
+    opened->device = Device::establish_bounded(udid, budget, error, false, true, failure);
     if (!opened->device) return nullptr;
     // 除选择阶段的过滤，再检查实际连接归属；热插拔变化不能降级为网络首次信任。
     if (opened->device->udid() != udid || opened->device->connection_type() != "USB") {
@@ -198,7 +200,9 @@ PairingResult detail::run_usb_pairing_workflow(std::string_view selected_udid,
                     return result;
                 }
                 if (!options.allow_repair) {
-                    result.error = "Device rejected the pairing record; enable USB repair explicitly";
+                    result.error_code = transport::DeviceError::unauthorized;
+                    result.error = "Device rejected the pairing record; enable USB repair explicitly" +
+                        transport::device_error_hint(result.error_code, true);
                     return result;
                 }
             } else if (existing && !options.allow_repair) {
@@ -272,8 +276,9 @@ PairingResult pair_usb_remote(const UsbPairingOptions &options) {
     if (!selected) { result.error = std::move(error); return result; }
 
     detail::PairingWorkflowOperations operations;
+    transport::DeviceError startup_failure = transport::DeviceError::other;
     operations.verify = [&](const wifi::PairRecord &record, std::string &operation_error) {
-        auto opened = open_pairing_channel(selected->udid, options, operation_error);
+        auto opened = open_pairing_channel(selected->udid, options, operation_error, &startup_failure);
         if (!opened) {
             wifi::PairVerifyResult failed;
             failed.error = operation_error;
@@ -283,7 +288,7 @@ PairingResult pair_usb_remote(const UsbPairingOptions &options) {
     };
     operations.setup = [&](std::string_view host_identifier, std::string_view hostname,
                            std::string_view udid, std::string &operation_error) {
-        auto opened = open_pairing_channel(selected->udid, options, operation_error);
+        auto opened = open_pairing_channel(selected->udid, options, operation_error, &startup_failure);
         if (!opened) {
             wifi::PairSetupResult failed;
             failed.error = operation_error;
@@ -296,6 +301,9 @@ PairingResult pair_usb_remote(const UsbPairingOptions &options) {
         return wifi::pair_setup(*opened->channel, host_identifier, hostname, udid,
                                options.progress, setup_options, operation_error);
     };
-    return detail::run_usb_pairing_workflow(selected->udid, wifi::local_hostname(), options, operations);
+    result = detail::run_usb_pairing_workflow(selected->udid, wifi::local_hostname(), options, operations);
+    if (!result.ok && startup_failure != transport::DeviceError::other)
+        result.error_code = startup_failure;
+    return result;
 }
 } // namespace xdb::remote

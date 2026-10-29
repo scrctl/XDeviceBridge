@@ -63,13 +63,15 @@ attachment 继承创建时的读／控制类型，不能把只读 attachment 附
 | handshake_rejected | 首个方法或协议不正确；服务端关闭套接字。使用兼容的客户端和服务端。 |
 | invalid_params | JSON 字段缺失、类型错误、数值越界或显式参数校验失败。修正请求；连接可能仍可使用。 |
 | cancelled | 后端分发前检测到取消；断连期间的取消也可能表现为 EOF／无响应。 |
-| operation_failed | 设备、发现／连接、配对、DDI、编解码、录制或其他后端失败。message 说明本次原因，尚无稳定子错误码。 |
+| operation_failed | 设备、发现／连接、配对、DDI、编解码、录制或其他后端失败。message 说明本次原因，原因明确时使用下列传输／配对分类。 |
 | device_busy | 其他会话／操作持有设备租约，或手动连接阻止管理操作。先关闭会话／附着连接，或 disconnect 手动连接。 |
 | exclusive_session_required | 共享控制组请求录制或全局媒体关闭；使用独占会话，或关闭本组关联。 |
 | media_conflict | 共享视频的参数与当前生产者不一致；使用相同参数。 |
 | input_busy | 其他共享组正在持有触摸手势，或共享键盘仍有按住的键。 |
 | read_only_session | 当前设备关联为只读，拒绝输入、媒体配置、音频队列读取及管理修改；不是本机进程鉴权。 |
-| not_paired | connect 没有可用的本地 Wi-Fi 凭据；请先配对。 |
+| not_paired | 找不到可用本地 Wi-Fi 配对记录。使用 `xdb -e pair` 完成配对。 |
+| unauthorized | 设备明确拒绝主机或已有配对记录。USB 请解锁并确认“信任”，然后使用 `xdb -d pair`；Wi-Fi 请用 `xdb -e pair` 重新配对。 |
+| device_locked | 设备明确返回锁屏错误。解锁并保持亮屏后重试；这不表示配对失效或需要重装 DDI。 |
 | invalid_state | 当前连接或媒体状态不能执行该方法。修正调用顺序。 |
 | invalid_session | attachment 已失效或未知。重新打开会话。 |
 | not_connected | 需要设备会话的方法尚未 open/attach。先建立关联。 |
@@ -89,6 +91,8 @@ attachment 继承创建时的读／控制类型，不能把只读 attachment 附
 详见 [C SDK](C_API_zh.md)。
 
 ## 管理
+
+连接错误分类来自设备回复或本地凭据检查，不匹配终端文案。网络超时、传输失败、格式／签名／密码学错误及未知设备错误仍为 `operation_failed`，不推断为未授权。自动连接的两个传输均失败时，保留 USB 和 Wi-Fi 原因；分类无法归一时使用 `operation_failed`。不会自动删除或重建配对。
 
 ### `hello`
 

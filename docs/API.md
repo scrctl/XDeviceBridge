@@ -70,13 +70,15 @@ not a transaction mechanism for multiple control clients.
 | handshake_rejected | Wrong initial method/protocol; server closes socket. Use a compatible client/server. |
 | invalid_params | Missing/wrong JSON field type, bounded numeric value or explicit parameter validation failed. Fix request; connection can remain usable. |
 | cancelled | Cancellation detected before backend dispatch; disconnect-time cancellation may instead give EOF/no response. |
-| operation_failed | Device, discovery/connection, pairing, DDI, codec, recording or other backend failure. Message explains this occurrence; no stable subcodes yet. |
+| operation_failed | Device, discovery/connection, pairing, DDI, codec, recording or other backend failure. Message explains this occurrence; transport/pairing classifications below are available when the cause is explicit. |
 | device_busy | Device lease held by another session/operation, or a manual connection blocks management. Close sessions/attachments or disconnect the manual connection. |
 | exclusive_session_required | Shared group requested recording or global media shutdown; use an exclusive association or close this group instead. |
 | media_conflict | Shared video options differ from the current producer; use matching options. |
 | input_busy | Another shared group owns the touch gesture, or shared keyboard keys are held. |
 | read_only_session | The device association is read-only; rejects input, media configuration, consuming audio reads and management mutations. Not process authentication. |
-| not_paired | No usable local Wi-Fi record for connect. Pair first. |
+| not_paired | No usable local Wi-Fi record. Pair with `xdb -e pair`. |
+| unauthorized | Device explicitly rejected the host or pairing record. For USB, unlock and confirm Trust, then use `xdb -d pair`; for Wi-Fi, pair again with `xdb -e pair`. |
+| device_locked | Device explicitly reported a lock condition. Unlock and keep awake before retrying; this does not imply invalid pairing or a missing DDI. |
 | invalid_state | Method not valid for current connection/media state; fix ordering. |
 | invalid_session | Attachment no longer identifies a live session. Open a new one. |
 | not_connected | No device session for a device-dependent request. Open/attach first. |
@@ -95,6 +97,8 @@ Malformed framing, oversized messages and invalid request envelopes close the
 socket without guaranteeing an RPC error. Successful RPC error receipt does not
 mean transport failure. The C API return value distinguishes response receipt
 from an RPC's `ok`; see C_API.md.
+
+Connection error categories come from device replies or local record checks, not rendered-message matching. Network timeouts, transport, format/signature/crypto failures and unknown device errors remain `operation_failed`, never presumed unauthorized. Auto transport failure preserves both USB and Wi-Fi diagnostics; mixed causes use `operation_failed` when no single category applies. Records are never deleted or repaired automatically.
 
 ## Management
 

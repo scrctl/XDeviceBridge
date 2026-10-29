@@ -126,6 +126,13 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
                 assert not rejected['ok'] and rejected['error']['code'] == 'invalid_params', rejected
             not_paired = request(c, 'connect', {'address': '127.0.0.1'})
             assert not not_paired['ok'] and not_paired['error']['code'] == 'not_paired', not_paired
+            assert 'xdb -e pair' in not_paired['error']['message']
+            # Explicit Wi-Fi avoids USB probing and must classify missing records consistently.
+            for method, params in (('connection.open', {'udid': 'offline', 'transport': 'wifi'}),
+                                   ('ddi.status', {'udid': 'offline', 'wifi': 'auto'})):
+                rejected = request(c, method, params)
+                assert rejected['error']['code'] == 'not_paired', rejected
+                assert 'xdb -e pair' in rejected['error']['message'], rejected
             assert request(c, 'disconnect')['result']['disconnected'] == []
             assert not Path(data.decode()).exists(), 'connect/disconnect wrote pairing data'
             for method in ('ddi.status', 'ddi.remove'):

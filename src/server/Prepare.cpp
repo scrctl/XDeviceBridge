@@ -30,7 +30,9 @@ struct DdiTarget {
     std::optional<transport::Lockdown> lockdown;
     std::optional<remote::Device> device;
 
-    bool connect(const PrepareOptions &o, std::string &error, const Cancel &cancelled) {
+    bool connect(const PrepareOptions &o, std::string &error, const Cancel &cancelled,
+                 transport::DeviceError *failure) {
+        if (failure) *failure = transport::DeviceError::other;
         using namespace std::chrono;
         if (o.wifi.empty()) {
             transport::IoBudget preparation({seconds(30), cancelled});
@@ -42,7 +44,7 @@ struct DdiTarget {
             if (!record)
                 return false;
             lockdown =
-                transport::Lockdown::establish_bounded(record->device_id, record->udid, preparation, error);
+                transport::Lockdown::establish_bounded(record->device_id, record->udid, preparation, error, failure);
             if (!lockdown)
                 return false;
             auto query = plist::Value::Dict();
@@ -76,7 +78,7 @@ struct DdiTarget {
             target.chip_id = number("ChipID");
             ecid = number("UniqueChipID");
         } else {
-            device = open_device(o.serial, o.wifi, error, o.wifi_port, cancelled, o.data_directory);
+            device = open_device(o.serial, o.wifi, error, o.wifi_port, cancelled, o.data_directory, failure);
             if (!device)
                 return false;
             target.system_version = device->property("OSVersion");
@@ -99,7 +101,9 @@ struct DdiTarget {
     }
 };
 } // namespace
-bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event, const Cancel &cancelled) {
+bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event, const Cancel &cancelled,
+                 transport::DeviceError *failure) {
+    if (failure) *failure = transport::DeviceError::other;
     using namespace std::chrono;
     auto emit = [&](const char *format, auto... args) {
         char buffer[2048];
@@ -117,7 +121,7 @@ bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event
         return false;
     };
     DdiTarget connected;
-    if (!connected.connect(o, error, cancelled))
+    if (!connected.connect(o, error, cancelled, failure))
         return fail();
     auto &[target, ecid, record, lockdown, device] = connected;
     if (cancelled && cancelled()) {
@@ -304,10 +308,11 @@ bool prepare_ddi(const PrepareOptions &o, std::string &error, const Event &event
     return true;
 }
 std::optional<Json> manage_ddi(const PrepareOptions &o, bool remove, std::string &error,
-                              const Cancel &cancelled) {
+                              const Cancel &cancelled, transport::DeviceError *failure) {
+    if (failure) *failure = transport::DeviceError::other;
     using namespace std::chrono;
     DdiTarget connected;
-    if (!connected.connect(o, error, cancelled))
+    if (!connected.connect(o, error, cancelled, failure))
         return std::nullopt;
     const auto selected = ddi::select_for_version(connected.target.system_version, error);
     if (!selected)

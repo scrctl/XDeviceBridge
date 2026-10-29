@@ -147,7 +147,11 @@ std::optional<Device> Device::establish(std::string_view udid, std::string &err,
 }
 
 std::optional<Device> Device::establish_bounded(std::string_view udid,
-    const transport::IoBudget &budget, std::string &err, bool verbose, bool usb_only) {
+    const transport::IoBudget &budget, std::string &err, bool verbose, bool usb_only,
+    transport::DeviceError *failure) {
+    transport::DeviceError local_failure;
+    if (!failure) failure = &local_failure;
+    *failure = transport::DeviceError::other;
     if (!budget.check(err)) return std::nullopt;
     const auto cancelled = [&budget] { return budget.stopped(); };
     auto mux = transport::Usbmux::open_for_service(budget.remaining(), cancelled, err);
@@ -169,17 +173,18 @@ std::optional<Device> Device::establish_bounded(std::string_view udid,
     dev->connection_type_ = chosen->connection_type;
 
     stage(verbose, "lockdown pairing session");
-    dev->lockdown_ = transport::Lockdown::establish_bounded(chosen->device_id, chosen->udid, budget, err);
+    dev->lockdown_ = transport::Lockdown::establish_bounded(chosen->device_id, chosen->udid, budget, err, failure);
     if (!dev->lockdown_) {
         err = "Failed to establish lockdown session: " + err;
-        budget.check(err);
+        if (!budget.check(err)) *failure = transport::DeviceError::other;
         return std::nullopt;
     }
     stage(verbose, "Start CoreDeviceProxy");
-    auto ep = dev->lockdown_->start_service_bounded(kCoreDeviceProxy, budget, err);
+    auto ep = dev->lockdown_->start_service_bounded(kCoreDeviceProxy, budget, err, failure);
     if (!ep) {
-        err = "Start " + std::string(kCoreDeviceProxy) + " failed: " + err + proxy_failure_hint(err);
-        budget.check(err);
+        err = "Start " + std::string(kCoreDeviceProxy) + " failed: " + err +
+              (*failure == transport::DeviceError::other ? proxy_failure_hint(err) : "");
+        if (!budget.check(err)) *failure = transport::DeviceError::other;
         return std::nullopt;
     }
     stage(verbose, "CDTunnel handshake");
@@ -244,17 +249,22 @@ std::optional<Device> Device::establish_wifi(const std::string &address,
 
 std::optional<Device> Device::establish_wifi_bounded(const std::string &address,
     const wifi::PairRecord &record, const transport::IoBudget &budget,
-    std::string &err, bool verbose, uint16_t port) {
+    std::string &err, bool verbose, uint16_t port, transport::DeviceError *failure) {
+    if (failure) *failure = transport::DeviceError::other;
     if (!budget.check(err)) return std::nullopt;
     // 本地记录问题应在连接前报出，避免网络不可达掩盖重新配对的原因。
     if (!record.complete()) {
-        err = "Pairing record incomplete; cannot sign";
-        budget.check(err);
+        err = "Pairing record incomplete; cannot sign" +
+              transport::device_error_hint(transport::DeviceError::not_paired, true);
+        if (failure) *failure = transport::DeviceError::not_paired;
+        if (!budget.check(err) && failure) *failure = transport::DeviceError::other;
         return std::nullopt;
     }
     if (!record.has_peer_identity()) {
-        err = "Pairing record has no device identity; pair again over USB";
-        budget.check(err);
+        err = "Pairing record has no device identity" +
+              transport::device_error_hint(transport::DeviceError::not_paired, true);
+        if (failure) *failure = transport::DeviceError::not_paired;
+        if (!budget.check(err) && failure) *failure = transport::DeviceError::other;
         return std::nullopt;
     }
     std::optional<Device> dev;
@@ -284,11 +294,13 @@ std::optional<Device> Device::establish_wifi_bounded(const std::string &address,
     if (verified.outcome != wifi::VerifyOutcome::Paired) {
         if (verified.outcome == wifi::VerifyOutcome::NotPaired) {
             err = "Device rejected pairing record: " + mask(record.udid, 8) +
-                  " is not paired with this device, or its pairing was removed";
+                  " is not paired with this device, or its pairing was removed" +
+                  transport::device_error_hint(transport::DeviceError::unauthorized, true);
+            if (failure) *failure = transport::DeviceError::unauthorized;
         } else {
             err = "pair-verify failed: " + verified.error;
         }
-        budget.check(err);
+        if (!budget.check(err) && failure) *failure = transport::DeviceError::other;
         return std::nullopt;
     }
 

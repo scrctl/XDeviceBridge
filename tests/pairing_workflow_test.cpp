@@ -201,7 +201,10 @@ void test_existing_records() {
     refused.existing(synthetic_record());
     refused.verify_outcomes = {wifi::VerifyOutcome::NotPaired};
     result = refused.run();
-    check(!result.ok && refused.setups == 0, "device rejection does not automatically rotate keys");
+    check(!result.ok && refused.setups == 0 &&
+          result.error_code == transport::DeviceError::unauthorized &&
+          result.error.find("xdb -e pair") != std::string::npos,
+          "device rejection is classified without automatically rotating keys");
     Fixture repair;
     repair.existing(synthetic_record());
     repair.options.allow_repair = true;

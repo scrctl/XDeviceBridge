@@ -54,7 +54,7 @@ public:
                                            bool verbose = false, bool usb_only = false);
     static std::optional<Device> establish_bounded(std::string_view udid,
         const transport::IoBudget &budget, std::string &err,
-        bool verbose = false, bool usb_only = false);
+        bool verbose = false, bool usb_only = false, transport::DeviceError *failure = nullptr);
 
     /// 使用远程配对记录，经 pair-verify、设备监听端口和 TLS-PSK 建立局域网隧道。
     /// address/port 指向设备 RemotePairing 服务；隧道建立后复用同一套 Stack/RSD。
@@ -65,7 +65,8 @@ public:
                                                 uint16_t port = wifi::kAdvertisedPortFallback);
     static std::optional<Device> establish_wifi_bounded(const std::string &address,
         const wifi::PairRecord &record, const transport::IoBudget &budget, std::string &err,
-        bool verbose = false, uint16_t port = wifi::kAdvertisedPortFallback);
+        bool verbose = false, uint16_t port = wifi::kAdvertisedPortFallback,
+        transport::DeviceError *failure = nullptr);
 
     /// Abort startup I/O on this owned tunnel only. Caller must stop/join its
     /// watchdog before moving or destroying Device; never resume an aborted session.

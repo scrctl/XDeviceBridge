@@ -120,8 +120,9 @@ std::optional<Lockdown> Lockdown::establish_bounded(uint32_t device_id, std::str
 }
 
 std::optional<Lockdown> Lockdown::establish_bounded(uint32_t device_id, std::string_view udid,
-        const IoBudget &budget, std::string &err) {
+        const IoBudget &budget, std::string &err, DeviceError *failure) {
     err.clear();
+    if (failure) *failure = DeviceError::other;
     if (!budget.check(err)) return {};
     auto cancelled = [&budget] { return budget.stopped(); };
     auto rec_mux = Usbmux::open_for_service(budget.remaining(), cancelled, err);
@@ -154,7 +155,7 @@ std::optional<Lockdown> Lockdown::establish_bounded(uint32_t device_id, std::str
         if (!guard.finish(err) || !ok) return {};
     }
     if (const auto *value = reply.find("Error")) {
-        err = "StartSession rejected: " + value->as_string_or("?"); return {};
+        err = lockdown_rejection("StartSession", value->as_string_or("?"), failure); return {};
     }
     if (const auto *value = reply.find("SessionID")) ld.session_id_ = value->as_string_or();
     const auto *want_ssl = reply.find("EnableSessionSSL");
@@ -222,7 +223,7 @@ std::optional<Lockdown> Lockdown::establish(uint32_t device_id, std::string_view
         return std::nullopt;
     }
     if (const auto *e = reply.find("Error"); e != nullptr) {
-        err = "StartSession rejected: " + e->as_string_or("?");
+        err = lockdown_rejection("StartSession", e->as_string_or("?"));
         return std::nullopt;
     }
     if (const auto *sid = reply.find("SessionID")) {
@@ -237,7 +238,8 @@ std::optional<Lockdown> Lockdown::establish(uint32_t device_id, std::string_view
 }
 
 std::optional<Lockdown::ServiceEndpoint> Lockdown::start_service(std::string_view name,
-                                                                 std::string &err) {
+                                                                 std::string &err, DeviceError *failure) {
+    if (failure) *failure = DeviceError::other;
     plist::Value req = plist::Value::Dict();
     req.set("Request", plist::Value::Str("StartService"));
     req.set("Service", plist::Value::Str(std::string(name)));
@@ -246,7 +248,7 @@ std::optional<Lockdown::ServiceEndpoint> Lockdown::start_service(std::string_vie
         return std::nullopt;
     }
     if (const auto *e = reply.find("Error"); e != nullptr) {
-        err = "StartService(" + std::string(name) + ") rejected: " + e->as_string_or("?");
+        err = lockdown_rejection("StartService(" + std::string(name) + ")", e->as_string_or("?"), failure);
         return std::nullopt;
     }
     const auto *port = reply.find("Port");
@@ -262,12 +264,17 @@ std::optional<Lockdown::ServiceEndpoint> Lockdown::start_service(std::string_vie
 }
 
 std::optional<Lockdown::ServiceEndpoint> Lockdown::start_service_bounded(std::string_view name,
-        const IoBudget &budget, std::string &err) {
+        const IoBudget &budget, std::string &err, DeviceError *failure) {
+    if (failure) *failure = DeviceError::other;
     if (!budget.check(err)) return {};
     bounded_io_ = true;
     SocketBudgetGuard guard(sock_, budget);
-    auto endpoint = start_service(name, err);
-    if (!guard.finish(err) || !endpoint) { sock_.interrupt(); return {}; }
+    auto endpoint = start_service(name, err, failure);
+    if (!guard.finish(err)) {
+        if (failure) *failure = DeviceError::other;
+        sock_.interrupt(); return {};
+    }
+    if (!endpoint) { sock_.interrupt(); return {}; }
     return endpoint;
 }
 
