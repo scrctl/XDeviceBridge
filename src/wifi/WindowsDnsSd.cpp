@@ -5,7 +5,7 @@
 
 #include <windows.h>
 #include <windns.h>
-#include <netioapi.h>
+#include <iphlpapi.h>
 
 #include <algorithm>
 #include <atomic>
