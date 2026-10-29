@@ -95,7 +95,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
                     ('screenshot',), ('connect',), ('disconnect',), ('start-server',), ('kill-server',), ('server',),
-                    ('rpc',), ('rpc-shell',), ('version',)):
+                    ('rpc',), ('rpc-shell',), ('version',), ('get-state',), ('get-serialno',)):
         args = command if command == ('-h',) else (*command, '--help')
         assert 'Usage:' in run(*args).stdout
     assert 'connectivity' in run('devices', '--help').stdout
@@ -108,6 +108,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         error = run(*args, ok=False).stderr
         assert 'run xdb ddi --help' in error and 'screenshot' not in error
     assert 'not an iOS command shell' in run('rpc-shell', '--help').stdout
+    assert 'liveness probe' in run('get-state', '--help').stdout
     assert 'Unknown command' in run('unknown', '--help', ok=False).stderr
     assert 'Unknown ddi command' in run('ddi', 'unknown', '--help', ok=False).stderr
     # Help must not read runtime configuration or contact/start a server.
@@ -124,7 +125,8 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     for args in (('connect',), ('connect', '10.0.0.7:0'), ('connect', '[::1'),
                  ('connect', '10.0.0.7:abc'), ('connect', '10.0.0.7:65536'),
                  ('connect', '10.0.0.7:'), ('connect', '[::1]:-1'),
-                 ('connect', '10.0.0.7', '--usb'), ('connect', '10.0.0.7', '--timeout', '0')):
+                 ('connect', '10.0.0.7', '--usb'), ('connect', '10.0.0.7', '--timeout', '0'),
+                 ('get-state', 'extra'), ('get-serialno', 'extra')):
         run(*args, ok=False)
     assert server.methods() == before_help, 'invalid endpoint contacted the server'
     assert 'Connected to 10.0.0.7:49152' in run('connect', '10.0.0.7').stdout
@@ -170,6 +172,15 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     usb = next(line for line in long.splitlines() if line.startswith('  usb '))
     assert 'type:USB' in usb and 'pairing:' not in usb
     assert json.loads(run('devices', '--json').stdout)['result']['devices'] == devices
+    before_query = len(server.calls)
+    assert run('get-serialno').stdout == 'mock-iphone\n'
+    for state in ('discovered', 'paired', 'connected'):
+        devices[0]['state'] = state
+        assert run('get-state').stdout == state + '\n'
+    devices[0]['state'] = 'paired'
+    assert json.loads(run('get-serialno', '--json').stdout)['result'] == dict(udid='mock-iphone', state='paired')
+    assert 'Device not found: missing' in run('-s', 'missing', 'get-state', ok=False).stderr
+    assert all(name in ('hello', 'devices') for name, _ in server.calls[before_query:]), 'device queries opened a session'
     saved_device = copy.deepcopy(devices[0])
     devices[0]['name'] = ''
     devices[0]['candidates'][0]['interface'] = ''
@@ -198,6 +209,8 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     devices[0]['state'] = 'connected'
     devices.append(dict(udid='', name='', state='discovered', candidates=[]))
     run('screenshot', target)
+    assert run('get-state').stdout == 'connected\n'
+    assert run('get-serialno').stdout == 'mock-iphone\n'
     devices.pop()
     devices[0].pop('manual_connection')
     devices[0]['state'] = 'paired'
@@ -248,11 +261,16 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     # Multiple endpoints / duplicate identified rows still refer to one UDID.
     devices.append(copy.deepcopy(phone))
     run('screenshot', target)
+    assert run('get-serialno').stdout == 'mock-iphone\n'
     devices[-1]['udid'] = 'another-phone'
     before = server.methods().count('connection.open')
     result = run('screenshot', target, ok=False)
     assert 'Multiple devices' in result.stderr and 'another-phone' in result.stderr
     assert server.methods().count('connection.open') == before
+    for query in ('get-state', 'get-serialno'):
+        assert 'Multiple devices' in run(query, ok=False).stderr
+    assert run('get-serialno', serial='another-phone').stdout == 'another-phone\n'
+    assert run('-s', 'mock-iphone', 'get-serialno', serial='another-phone').stdout == 'mock-iphone\n'
     for action in ('status', 'remove'):
         before = server.methods().count('ddi.' + action)
         assert 'Multiple devices' in run('ddi', action, ok=False).stderr
@@ -268,6 +286,9 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'pair it first' in run('screenshot', target, ok=False).stderr
     devices.clear()
     assert 'No device found' in run('screenshot', target, ok=False).stderr
+    for query in ('get-state', 'get-serialno'):
+        missing = run(query, ok=False)
+        assert 'No device found' in missing.stderr and not missing.stdout
     for action in ('status', 'remove'):
         assert 'No device found' in run('ddi', action, ok=False).stderr
     cancelled = True

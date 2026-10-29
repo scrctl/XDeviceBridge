@@ -128,6 +128,12 @@ installation path and running platform. Use `xdb rpc server.info` for the runnin
 Set `XDB_SERIAL` to use a default device UDID. Explicit `-s UDID` or `--serial UDID`
 overrides it. Without either, device commands select a sole available device.
 
+`xdb get-serialno` prints the selected device UDID; `xdb get-state` prints
+`discovered`, `paired` or `connected` from the same snapshot as `devices`.
+These queries open no device session and fail for missing or ambiguous devices.
+`paired` does not establish connectivity, and `connected` is not a fresh liveness probe.
+Both support `-s`, `XDB_SERIAL`, `--usb`/`--wifi`, `--timeout MS` and `--json`.
+
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.
 It listens only on loopback (default port 17423); local clients need no access token.

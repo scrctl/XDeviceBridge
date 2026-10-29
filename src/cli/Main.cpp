@@ -91,6 +91,48 @@ void print_devices(const Json &result, bool detailed) {
     for (const auto &warning : result["warnings"])
         std::cerr << "warning: " << warning.get<std::string>() << '\n';
 }
+
+const Json &select_device(const Json &devices, const std::string &serial,
+                          bool prefer_manual, const std::string &wifi_address) {
+    std::set<std::string> identifiers, manual;
+    bool unidentified = false;
+    for (const auto &device : devices) {
+        auto id = device.value("udid", std::string());
+        if (!serial.empty() && id != serial) continue;
+        if (!wifi_address.empty() && wifi_address != "auto") {
+            bool matches = false;
+            for (const auto &candidate : device["candidates"])
+                matches |= candidate.value("transport", std::string()) == "wifi" &&
+                           candidate.value("address", std::string()) == wifi_address;
+            if (!matches) continue;
+        }
+        if (id.empty())
+            unidentified = true;
+        else {
+            identifiers.insert(id);
+            if (prefer_manual && device.contains("manual_connection") &&
+                device.value("state", std::string()) == "connected") manual.insert(id);
+        }
+    }
+    if (!manual.empty()) {
+        identifiers = std::move(manual);
+        unidentified = false;
+    }
+    if (identifiers.empty()) {
+        if (!serial.empty()) throw std::invalid_argument("Device not found: " + serial);
+        throw std::invalid_argument(unidentified ? "Discovered device has no known UDID; pair it first"
+                                                 : "No device found");
+    }
+    if (identifiers.size() > 1 || unidentified) {
+        std::string message = "Multiple devices; select one with -s UDID:";
+        for (const auto &id : identifiers) message += " " + id;
+        if (unidentified) message += " (also unidentified devices)";
+        throw std::invalid_argument(message);
+    }
+    return *std::find_if(devices.begin(), devices.end(), [&](const auto &device) {
+        return device.value("udid", std::string()) == *identifiers.begin();
+    });
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
@@ -211,8 +253,12 @@ int main(int argc, char **argv) {
             return ok ? 0 : 1;
         }
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
-            args[0] != "rpc" && args[0] != "rpc-shell" && args[0] != "connect" && args[0] != "disconnect")
+            args[0] != "rpc" && args[0] != "rpc-shell" && args[0] != "connect" && args[0] != "disconnect" &&
+            args[0] != "get-state" && args[0] != "get-serialno")
             throw std::invalid_argument("Unknown command; run xdb --help");
+        const bool query_device = args[0] == "get-state" || args[0] == "get-serialno";
+        if (query_device && args.size() != 1)
+            throw std::invalid_argument("Unexpected argument for " + args[0]);
         std::optional<xdb::ipc::Endpoint> endpoint;
         if (args[0] == "connect" || args[0] == "disconnect") {
             if (args.size() > 2 || (args[0] == "connect" && args.size() != 2))
@@ -369,11 +415,11 @@ int main(int argc, char **argv) {
             }
             return request(args[0], params).value("ok", false) ? 0 : 1;
         }
-        if (args[0] != "screenshot" && args[0] != "ddi")
+        if (args[0] != "screenshot" && args[0] != "ddi" && !query_device)
             throw std::invalid_argument("Unknown command; run xdb --help");
         if (args[0] == "screenshot" && args.size() != 2)
             throw std::invalid_argument("Expected screenshot FILE");
-        if (serial.empty()) {
+        if (serial.empty() || query_device) {
             Json options = {{"transport", usb ? "usb" : wifi ? "wifi" : "auto"}};
             if (timeout >= 0)
                 options["timeout_ms"] = timeout;
@@ -382,43 +428,19 @@ int main(int argc, char **argv) {
                 return 1;
             if (found["result"].value("cancelled", false))
                 throw std::runtime_error("Device discovery was cancelled");
-            std::set<std::string> identifiers, manual;
-            bool unidentified = false;
-            for (const auto &device : found["result"]["devices"]) {
-                if (wifi && wifi_address != "auto") {
-                    bool matches = false;
-                    for (const auto &candidate : device["candidates"])
-                        matches |= candidate.value("transport", std::string()) == "wifi" &&
-                                   candidate.value("address", std::string()) == wifi_address;
-                    if (!matches)
-                        continue;
-                }
-                auto id = device.value("udid", std::string());
-                if (id.empty())
-                    unidentified = true;
-                else {
-                    identifiers.insert(id);
-                    if (args[0] == "screenshot" && !usb && device.contains("manual_connection") &&
-                        device.value("state", std::string()) == "connected") manual.insert(id);
-                }
-            }
-            if (!manual.empty()) {
-                identifiers = std::move(manual);
-                unidentified = false;
-            }
-            if (identifiers.empty())
-                throw std::invalid_argument(unidentified ? "Discovered device has no known UDID; pair it first"
-                                                         : "No device found");
-            if (identifiers.size() > 1 || unidentified) {
-                std::string message = "Multiple devices; select one with -s UDID:";
-                for (const auto &id : identifiers)
-                    message += " " + id;
-                if (unidentified)
-                    message += " (also unidentified devices)";
-                throw std::invalid_argument(message);
-            }
-            serial = *identifiers.begin();
+            const auto &device = select_device(found["result"]["devices"], serial,
+                                                args[0] != "ddi" && !usb, wifi ? wifi_address : "");
+            serial = device.at("udid").get<std::string>();
             params["udid"] = serial;
+            if (query_device) {
+                auto state = device.at("state").get<std::string>();
+                if (json_output) {
+                    found["result"] = {{"udid", serial}, {"state", state}};
+                    std::cout << found.dump() << '\n';
+                } else
+                    std::cout << (args[0] == "get-state" ? state : serial) << '\n';
+                return 0;
+            }
         }
         if (wifi)
             params["wifi"] = wifi_address;

@@ -124,6 +124,11 @@ C ABI 定义位于 [xdb.h](include/xdb/xdb.h)，通信协议见[通信协议说�
 可通过 `XDB_SERIAL` 设置默认设备 UDID；显式传入的 `-s UDID` 或 `--serial UDID` 优先。
 两者均未指定时，设备命令自动选择唯一可用设备。
 
+`xdb get-serialno` 输出所选设备的 UDID；`xdb get-state` 使用与 `devices` 相同的快照，
+输出 `discovered`、`paired` 或 `connected`。查询不打开设备会话，无设备或选择不明确时返回失败。
+`paired` 不代表当前可连接，`connected` 也不是一次新的连通性探测。
+两者均支持 `-s`、`XDB_SERIAL`、`--usb`／`--wifi`、`--timeout MS` 和 `--json`。
+
 桌面端 CLI 和 SDK 会在需要时自动启动后台 Server。客户端退出后，Server 继续运行，
 供其他客户端复用。它只监听本机回环地址，默认端口为 `17423`；本机客户端不需要访问令牌。
 服务不按本机进程或操作系统用户鉴权。能够连接该端口的本机进程可控制设备、访问剪贴板

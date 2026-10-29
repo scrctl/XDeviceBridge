@@ -22,6 +22,21 @@ constexpr CommandHelp commands[] = {
      "Show the local executable version, installation path and running platform.\n"
      "This does not start or connect to a server. Use xdb rpc server.info\n"
      "to query the running server version.\n"},
+    {"get-state", "xdb [-s UDID] get-state [--usb|--wifi [ADDRESS]] [--timeout MS] [--json]",
+     "Print discovered, paired or connected for the selected device.\n\n"
+     "Uses the same discovery snapshot as devices, without opening a device session.\n"
+     "paired means a matching local record; connected means an authenticated\n"
+     "server connection/session. This is not an active liveness probe.\n"
+     "A sole manual connection is preferred over unrelated discovery.\n"
+     "Missing or ambiguous devices fail without printing a state.\n\n"
+     "Example:\n  xdb -s UDID get-state\n"},
+    {"get-serialno", "xdb [-s UDID] get-serialno [--usb|--wifi [ADDRESS]] [--timeout MS] [--json]",
+     "Print the UDID of a selected discovered or manually connected device.\n\n"
+     "Use -s UDID or XDB_SERIAL when several devices are available.\n"
+     "A sole manual connection is preferred; otherwise select a sole device.\n"
+     "No device session is opened.\n"
+     "Missing or ambiguous devices fail without printing a UDID.\n\n"
+     "Example:\n  xdb get-serialno\n"},
     {"devices", "xdb devices [-l] [--usb|--wifi] [--timeout MS] [--json]",
      "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
@@ -129,6 +144,8 @@ void print_help(std::span<const std::string> command) {
                      "Commands:\n"
                      "  help [COMMAND...]   Show command help\n"
                      "  devices [-l]        List discovered devices\n"
+                     "  get-state           Print the selected device state\n"
+                     "  get-serialno        Print the selected device UDID\n"
                      "  pair                Pair with an iOS device\n"
                      "  connect HOST[:PORT] Keep a paired Wi-Fi connection in the server\n"
                      "  disconnect [HOST]   Close manual Wi-Fi connections\n"
