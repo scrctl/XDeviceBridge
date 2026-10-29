@@ -30,6 +30,7 @@ def exact(sock, size):
 
 
 class FakeServer(socketserver.ThreadingTCPServer):
+    server_version = "1.4.0"
     allow_reuse_address = True
     daemon_threads = True
     block_on_close = False
@@ -70,7 +71,7 @@ class FakeServer(socketserver.ThreadingTCPServer):
             self.calls.append((name, p))
         if name == 'hello':
             assert p == dict(protocol=1)
-            return dict(protocol=1), b''
+            return dict(protocol=1, version=self.server_version), b''
         if name == 'server.info':
             return dict(capabilities=dict(shared_control_sessions=self.shared_control)), b''
         if name == 'devices':

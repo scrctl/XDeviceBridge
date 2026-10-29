@@ -34,11 +34,24 @@ inline constexpr uint64_t kSurfaceTouchGesture = 1281;     ///< 触控板式指�
 /// mainTouchscreen 报告里的接触状态字节。
 inline constexpr uint8_t kStateContact = 0xC2;  ///< 在该位置保持接触
 inline constexpr uint8_t kStateRelease = 0x02;  ///< 抬起
+inline constexpr std::size_t kMaxTouchContacts = 5;
+
+struct TouchContact {
+    uint8_t identity;
+    uint16_t x, y;
+    bool down;
+};
+
 
 /// 以本进程首次调用为起点，读取 steady_clock 的纳秒差值，返回低 48 位。
 /// 时间戳用于表达报告间隔，手势速度依赖这些差值，不需要与设备墙钟对齐。
 /// 低 48 位在范围耗尽后会回绕；未回绕时保留单调时钟的顺序和实际间隔。
 [[nodiscard]] uint64_t report_timestamp();
+
+/// 完整触点快照；包含所有仍按下的触点，以及本次抬起的触点。
+/// 空集合、超过五点、重复或越界身份返回空报告。
+[[nodiscard]] std::vector<uint8_t> multitouch_report(std::span<const TouchContact> contacts,
+                                                   uint64_t timestamp = report_timestamp());
 
 /// 58 字节的 mainTouchscreen 报告（报告号 0x09）。
 ///
@@ -135,6 +148,8 @@ public:
     /// 向指定 service_id 发送主触摸屏格式的接触或抬起报告。
     /// x/y 是 0..1 的归一化屏幕坐标；调用方应选择支持该报告格式的面。
     bool touch(uint64_t service_id, double x, double y, bool down, std::string &err);
+
+    bool touches(std::span<const TouchContact> contacts, std::string &err);
 
     /// 在主触摸屏同一坐标按下、等待 hold_ms、抬起；hold_ms <= 0 时不等待。
     bool tap(double x, double y, int hold_ms, std::string &err);

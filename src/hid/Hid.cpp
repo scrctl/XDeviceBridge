@@ -67,6 +67,25 @@ std::vector<uint8_t> touchscreen_report(uint8_t state, uint16_t x, uint16_t y,
     return r;
 }
 
+std::vector<uint8_t> multitouch_report(std::span<const TouchContact> contacts, uint64_t timestamp) {
+    if (contacts.empty() || contacts.size() > kMaxTouchContacts) return {};
+    auto report = touchscreen_report(0, 0, 0, timestamp);
+    report[1] = static_cast<uint8_t>(contacts.size());
+    unsigned seen = 0;
+    for (std::size_t i = 0; i < contacts.size(); ++i) {
+        const auto &contact = contacts[i];
+        if (contact.identity >= kMaxTouchContacts || (seen & (1u << contact.identity))) return {};
+        seen |= 1u << contact.identity;
+        const auto offset = 3 + i * 5;
+        report[offset] = uint8_t((contact.down ? 0xc0 : 0) | contact.identity);
+        report[offset + 1] = uint8_t(contact.x);
+        report[offset + 2] = uint8_t(contact.x >> 8);
+        report[offset + 3] = uint8_t(contact.y);
+        report[offset + 4] = uint8_t(contact.y >> 8);
+    }
+    return report;
+}
+
 std::vector<uint8_t> keyboard_report(const std::vector<uint16_t> &usages, uint64_t timestamp) {
     std::vector<uint8_t> r(kKeyboardReportLen, 0);
     r[0] = 0x01;
@@ -157,6 +176,15 @@ bool Service::touch(uint64_t service_id, double x, double y, bool down, std::str
                        touchscreen_report(down ? kStateContact : kStateRelease, normalize(x),
                                           normalize(y)),
                        err);
+}
+
+bool Service::touches(std::span<const TouchContact> contacts, std::string &err) {
+    const auto report = multitouch_report(contacts);
+    if (report.empty()) {
+        err = "Invalid touchscreen contact set";
+        return false;
+    }
+    return send_report(kSurfaceMainTouchscreen, report, err);
 }
 
 bool Service::tap(double x, double y, int hold_ms, std::string &err) {

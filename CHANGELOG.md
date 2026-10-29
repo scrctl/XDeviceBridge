@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Extend `input.touch` with optional contact IDs 0..4 (default 0). Keep all
+  active contacts in each HID report and release them on session cleanup.
+  Shared mirrors retain gesture ownership until all contacts are released.
+  C ABI 1 and local RPC protocol 1 are unchanged. Multi-contact callers require
+  Server 1.4.0 or later; no additional capability flag is introduced.
+
 ## 1.3.0 — 2026-10-28
 
 - Wake the request disconnect monitor immediately when an RPC completes, removing

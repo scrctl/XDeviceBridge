@@ -3,12 +3,14 @@
 // 为什么要有：`send` 是只发不收的，编码错了设备**不会**告诉你，现场只是"屏幕
 // 没反应"。这类错误没有比"钉住一个可用客户端的真实字节"更硬的判据了——下面
 // 那段 284 字节的基准是从一个确认能在设备上画出东西的客户端抓下来的原样字节。
+#include <algorithm>
 #include <cstdio>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "hid/Hid.h"
+#include "hid/TouchState.h"
 #include "xpc/XpcValue.h"
 
 namespace {
@@ -69,6 +71,52 @@ void test_touchscreen_report() {
     // 时间戳是 6 字节而不是 8：多写两字节会把后面的保留区挤掉。
     check(contact[44] == 0x1d && contact[49] == 0x00 && contact[50] == 0x00,
           "时间戳占 44..49，其后 8 字节保留");
+}
+
+void test_multitouch() {
+    using namespace xdb::hid;
+    std::printf("\n== multi-contact reports and lifetime ==\n");
+    TouchState state;
+    std::vector<TouchContact> frame;
+    bool fail = false;
+    auto send = [&](std::span<const TouchContact> contacts, std::string &error) {
+        frame.assign(contacts.begin(), contacts.end());
+        if (fail) error = "injected send failure";
+        return !fail;
+    };
+    std::string error;
+    check(state.update(0, 0.5, 0.5, true, send, error), "legacy contact down");
+    check(multitouch_report(frame, 123) == touchscreen_report(kStateContact, normalize(.5), normalize(.5), 123),
+          "default contact preserves the original wire report");
+    for (int i = 1; i < 5; ++i)
+        check(state.update(i, i / 5.0, .4, true, send, error), "add contact " + std::to_string(i));
+    const auto report = multitouch_report(frame, 123);
+    check(frame.size() == 5 && report.size() == 58 && report[1] == 5 && report[2] == 5,
+          "five contacts fit the existing 58-byte report");
+    check(state.update(2, .4, .4, false, send, error) && frame.size() == 5 && !frame[2].down,
+          "release one identity while keeping the other four down");
+    check(state.update(0, .6, .5, true, send, error) && frame.size() == 4,
+          "released contact is absent from subsequent snapshots");
+    check(!state.update(-1, 0, 0, true, send, error) && !state.update(5, 0, 0, true, send, error),
+          "reject contact IDs outside 0..4");
+    auto duplicate = frame;
+    duplicate[1].identity = duplicate[0].identity;
+    check(multitouch_report(duplicate).empty(), "reject duplicate wire identities");
+    duplicate = frame;
+    duplicate[0].identity = 5;
+    check(multitouch_report(duplicate).empty() && multitouch_report({}).empty(), "reject invalid report sets");
+    fail = true;
+    check(!state.release(send, error) && state.active() && frame.size() == 4,
+          "failed cleanup retains all remaining contacts for retry");
+    fail = false;
+    check(state.release(send, error) && !state.active() &&
+              std::none_of(frame.begin(), frame.end(), [](auto c) { return c.down; }),
+          "cleanup lifts every held contact with its original identity");
+    fail = true;
+    check(!state.update(4, .8, .8, true, send, error) && state.active(), "failed down remains releasable");
+    fail = false;
+    check(state.release(send, error) && frame.size() == 1 && frame[0].identity == 4 && !frame[0].down,
+          "release the possibly delivered down after failure");
 }
 
 void test_normalize() {
@@ -165,6 +213,7 @@ void test_keyboard() {
 
 int main() {
     test_keyboard();
+    test_multitouch();
     test_touchscreen_report();
     test_normalize();
     test_send_message_golden();

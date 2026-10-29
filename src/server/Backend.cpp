@@ -5,6 +5,7 @@
 #include "Discovery.h"
 #include "ddi/Download.h"
 #include "hid/Hid.h"
+#include "hid/TouchState.h"
 #include "media/AudioPump.h"
 #include "media/FramePump.h"
 #include "media/Recorder.h"
@@ -145,8 +146,7 @@ struct Backend::Session {
     std::unique_ptr<media::AudioPump> audio;
     std::set<uint16_t> keys;
     std::set<std::pair<uint16_t, uint16_t>> held_buttons;
-    bool touching = false;
-    double x = 0, y = 0;
+    hid::TouchState touches;
     Session(Registry &r, std::shared_ptr<DeviceConnection> value, bool read_only)
         : registry(r), udid(value->device.udid()), control_clients(read_only ? 0 : 1),
           connection(std::move(value)), device(connection->device) {}
@@ -169,12 +169,12 @@ struct Backend::Session {
     void release_inputs() {
         std::string ignored;
         if (hid && !connection->closed) {
-            if (touching) hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
+            touches.release([&](auto contacts, auto &error) { return hid->touches(contacts, error); }, ignored);
             hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report({}), ignored);
         }
         if (buttons && !connection->closed)
             for (auto [page, code] : held_buttons) buttons->release(page, code, ignored);
-        touching = false;
+        touches = {};
         keys.clear();
         held_buttons.clear();
         buttons.reset();
@@ -244,9 +244,9 @@ void Backend::Session::detach_shared(SharedControl &owner) {
     }
     std::string ignored;
     if (hid && !connection->closed) {
-        if (touching && touch_owner == owner.attachment) {
-            hid->touch(hid::kSurfaceMainTouchscreen, x, y, false, ignored);
-            touching = false;
+        if (touches.active() && touch_owner == owner.attachment) {
+            touches.release([&](auto contacts, auto &error) { return hid->touches(contacts, error); }, ignored);
+            touches = {};
             touch_owner.clear();
         }
         // Also refresh after a failed final release, when the owner's desired
@@ -1124,38 +1124,35 @@ Reply Backend::handle_input(const std::string &method, const Json &p, const Canc
         s.hid = std::move(typing);
         return {};
     }
+    if (method == "input.touch" || method == "input.tap") {
+        const auto x = p.at("x").get<double>(), y = p.at("y").get<double>();
+        if (!unit(x) || !unit(y))
+            return Reply::failure("invalid_params", "Touch coordinates must be in [0,1]");
+        const bool tap = method == "input.tap";
+        const int contact = tap ? 0 : bounded(p, "contact", 0, 0, 4);
+        const bool down = tap || p.at("down").get<bool>();
+        const int hold = tap ? bounded(p, "hold_ms", 30, 0, 2000) : 0;
+        if (shared_control_ && s.touches.active() && s.touch_owner != shared_control_->attachment)
+            return Reply::failure("input_busy", "Another mirror is holding the touch gesture");
+        if (!s.hid) s.hid = hid::Service::open(s.device, error);
+        if (!s.hid) return fail(error);
+        if (s.video) s.video->wake();
+        if (shared_control_ && down) s.touch_owner = shared_control_->attachment;
+        const auto send = [&](auto contacts, auto &failure) { return s.hid->touches(contacts, failure); };
+        bool ok = s.touches.update(contact, x, y, down, send, error);
+        if (tap && ok) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(hold));
+            ok = s.touches.update(contact, x, y, false, send, error);
+        }
+        if (!s.touches.active()) s.touch_owner.clear();
+        return ok ? Reply{} : fail(error);
+    }
     if (!s.hid)
         s.hid = hid::Service::open(s.device, error);
     if (!s.hid)
         return fail(error);
     if (s.video)
         s.video->wake();
-    if (method == "input.touch" || method == "input.tap") {
-        auto x = p.at("x").get<double>(), y = p.at("y").get<double>();
-        if (!unit(x) || !unit(y))
-            return Reply::failure("invalid_params", "Touch coordinates must be in [0,1]");
-        if (shared_control_ && s.touching && s.touch_owner != shared_control_->attachment)
-            return Reply::failure("input_busy", "Another mirror is holding the single touch contact");
-        s.x = x;
-        s.y = y;
-        if (method == "input.tap") {
-            s.touching = true;
-            if (shared_control_) s.touch_owner = shared_control_->attachment;
-            const bool ok = s.hid->tap(x, y, bounded(p, "hold_ms", 30, 0, 2000), error);
-            if (ok)
-                s.touching = false;
-            return ok ? Reply{} : fail(error);
-        }
-        bool down = p.at("down").get<bool>();
-        if (down) {
-            s.touching = true;
-            if (shared_control_) s.touch_owner = shared_control_->attachment;
-        }
-        const bool ok = s.hid->touch(hid::kSurfaceMainTouchscreen, x, y, down, error);
-        if (ok)
-            s.touching = down;
-        return ok ? Reply{} : fail(error);
-    }
     if (method == "input.keyboard") {
         auto usages = p.at("usages").get<std::vector<uint16_t>>();
         for (auto key : usages)

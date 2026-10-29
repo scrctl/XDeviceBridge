@@ -114,7 +114,7 @@ is a quick summary rather than the full method contract.
 | `video.frame` | `since`: frame serial, `timeout_ms`: 0..1000 | Format BGRA, serial, width, height, row pitch, optional display geometry; raw pixels |
 | `video.stop` | none | Stops the video pump |
 | `input.tap` | `x`, `y`: 0..1; `hold_ms`: 0..2000 | Report delivery status |
-| `input.touch` | `x`, `y`: 0..1; `down`: bool | Contact/release report delivery status |
+| `input.touch` | `x`, `y`: 0..1; `down`: bool; optional integer `contact`: 0..4, default 0 | Specified contact/release report delivery status |
 | `input.keyboard` | `usages`: USB HID keyboard usages, each <240 | Replaces the held keyboard usage set; `[]` releases |
 | `input.button` | `page` (default 12), `usage`, `down` | Hardware consumer-key down/up |
 | `input.text` | `text`: US-keyboard ASCII/tab/newline, <=4096 bytes; `timeout_ms`: 1..300000 (default 30000) | Unsupported text is rejected in full |
@@ -276,3 +276,9 @@ request does not reserve a slot. Connections owning/attached to a device session
 and requests already executing are not evicted by this policy. Stalled frame
 chunks have a five-second receive timeout. Clients whose idle socket was closed
 must reconnect before another request.
+
+### Multiple touch contacts (Server 1.4.0+)
+
+For `input.touch`, `down: true` presses or moves the specified `contact`; `down: false` lifts only that contact. Server sends a complete HID snapshot of all active contacts and releases them during session cleanup. Omitting `contact` preserves the original single-contact calls.
+
+Multi-contact callers must check for Server 1.4.0 or later: older Servers may ignore the unknown `contact` parameter. No new capability flag, C ABI or RPC protocol number is introduced. A shared control group owns the whole touch gesture until all contacts lift; separate windows do not combine their contacts into one gesture.
