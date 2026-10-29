@@ -115,8 +115,8 @@ C ABI 定义位于 [xdb.h](include/xdb/xdb.h)，通信协议见[通信协议说�
 
 ## 命令行使用
 
-运行 `xdb` 或 `xdb --help` 查看命令速查。各子命令提供参数说明和示例，
-例如 `xdb pair --help`、`xdb ddi prepare --help`。查看帮助不会启动或连接 Server。
+运行 `xdb`、`xdb help` 或 `xdb --help` 查看命令速查。各子命令提供参数说明和示例，
+例如 `xdb pair --help`、`xdb help ddi prepare`。查看帮助不会启动或连接 Server。
 
 使用 `xdb --version` 或 `xdb version` 查看本地程序版本、安装路径和运行平台。
 运行中的 Server 版本可用 `xdb rpc server.info` 查询。

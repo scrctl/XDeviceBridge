@@ -84,6 +84,10 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert f'Installed as {exe}\n' in version
     assert run('version').stdout == version
     summary = run('--help').stdout
+    assert run('help').stdout == summary
+    assert run('help', 'devices').stdout == run('devices', '--help').stdout
+    assert run('help', 'ddi', 'prepare').stdout == run('ddi', 'prepare', '--help').stdout
+    assert 'Unknown command' in run('help', 'unknown', ok=False).stderr
     assert 'Commands:' in summary and 'Options:' in summary
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
@@ -105,7 +109,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'Unknown ddi command' in run('ddi', 'unknown', '--help', ok=False).stderr
     # Help must not read runtime configuration or contact/start a server.
     help_env = dict(os.environ, XDB_PORT='invalid', XDB_EXECUTABLE='/nonexistent/xdb')
-    for args in ((), ('--help',), ('ddi',), ('server', '--help'), ('pair', '--help')):
+    for args in ((), ('--help',), ('help',), ('help', 'devices'), ('ddi',), ('server', '--help'), ('pair', '--help')):
         result = subprocess.run([exe, *args], env=help_env, text=True, capture_output=True,
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr

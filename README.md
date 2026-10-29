@@ -118,8 +118,8 @@ also enforces offline dependency resolution there.
 
 ## Command-line use
 
-Run `xdb` or `xdb --help` for a command overview. Each command has detailed help
-and examples, such as `xdb pair --help` and `xdb ddi prepare --help`.
+Run `xdb`, `xdb help` or `xdb --help` for a command overview. Each command has detailed help
+and examples, such as `xdb pair --help` and `xdb help ddi prepare`.
 Help does not start or connect to a server.
 
 Use `xdb --version` or `xdb version` to show the local executable version,

@@ -154,6 +154,10 @@ int main(int argc, char **argv) {
             else
                 args.push_back(a);
         }
+        if (!args.empty() && args[0] == "help") {
+            args.erase(args.begin());
+            show_help = true;
+        }
         if (show_version || (!show_help && args.size() == 1 && args[0] == "version")) {
             xdb::cli::print_version();
             return 0;

@@ -15,6 +15,9 @@ struct CommandHelp {
 };
 
 constexpr CommandHelp commands[] = {
+    {"help", "xdb help [COMMAND...]",
+     "Show the command overview, or detailed help for a command.\n\n"
+     "Examples:\n  xdb help\n  xdb help devices\n  xdb help ddi prepare\n"},
     {"version", "xdb version",
      "Show the local executable version, installation path and running platform.\n"
      "This does not start or connect to a server. Use xdb rpc server.info\n"
@@ -124,6 +127,7 @@ void print_help(std::span<const std::string> command) {
         std::cout << "XDeviceBridge " XDB_VERSION_STRING "\n\n"
                      "Usage: xdb [options] <command> [args]\n\n"
                      "Commands:\n"
+                     "  help [COMMAND...]   Show command help\n"
                      "  devices [-l]        List discovered devices\n"
                      "  pair                Pair with an iOS device\n"
                      "  connect HOST[:PORT] Keep a paired Wi-Fi connection in the server\n"
