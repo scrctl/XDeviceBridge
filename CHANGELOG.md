@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Wait for a bounded TCP acknowledgement after final input cleanup before tearing
+  down the last device session, so queued touch releases reach the device.
+
 - Extend `input.touch` with optional contact IDs 0..4 (default 0). Keep all
   active contacts in each HID report and release them on session cleanup.
   Shared mirrors retain gesture ownership until all contacts are released.

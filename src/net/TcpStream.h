@@ -17,6 +17,9 @@ public:
   bool connect(uint16_t peer_port, std::string &err);
   // 并发发送按整个调用串行化，防止不同消息的字节交错；发送空间等待使用 15 秒截止时间。
   bool send(std::string_view data, std::string &err) override;
+  // 等待已提交的数据收到 TCP ACK，用于发送最终清理报告后关闭隧道。
+  // 不等待设备业务回复；超时或并发关闭返回 false，不修改普通 send 的语义。
+  bool drain(int timeout_ms, std::string &err);
   // 返回当前已缓存的字节，不保留消息边界。设置 timed_out 时，超时单独报告且 err 留空。
   bool recv(std::vector<uint8_t> &out, int timeout_ms, std::string &err,
             bool *timed_out = nullptr) override;

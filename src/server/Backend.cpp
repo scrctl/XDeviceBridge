@@ -171,6 +171,9 @@ struct Backend::Session {
         if (hid && !connection->closed) {
             touches.release([&](auto contacts, auto &error) { return hid->touches(contacts, error); }, ignored);
             hid->send_report(hid::kSurfaceKeyboard, hid::keyboard_report({}), ignored);
+            // send_only queues reports; the last session is about to destroy its tunnel.
+            // Wait for transport acknowledgement, not an optional HID business reply.
+            hid->drain(1000, ignored);
         }
         if (buttons && !connection->closed)
             for (auto [page, code] : held_buttons) buttons->release(page, code, ignored);

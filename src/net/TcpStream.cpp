@@ -199,6 +199,40 @@ bool TcpStream::send(std::string_view data, std::string &err) {
   }
   return connected() ? true : (err = "TCP connection not established", false);
 }
+bool TcpStream::drain(int timeout_ms, std::string &err) {
+  auto s = impl_;
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(std::clamp(timeout_ms, 0, 5000));
+  err.clear();
+  for (;;) {
+    uint64_t progress;
+    {
+      std::lock_guard lock(s->mutex);
+      if (s->closed || !s->failure.empty()) {
+        err = s->failure.empty() ? "TCP connection closed" : s->failure;
+        return false;
+      }
+      progress = s->progress;
+    }
+    const int state = LwipRuntime::instance().call([s] {
+      if (!s->pcb) return -1;
+      return !s->pcb->unsent && !s->pcb->unacked ? 1 : 0;
+    });
+    if (state == 1) return true;
+    if (state < 0) { err = "TCP connection closed"; return false; }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      err = "TCP drain timed out";
+      return false;
+    }
+    std::unique_lock lock(s->mutex);
+    if (!s->cv.wait_until(lock, deadline, [&] {
+          return s->progress != progress || s->closed || !s->failure.empty();
+        })) {
+      err = "TCP drain timed out";
+      return false;
+    }
+  }
+}
 bool TcpStream::recv(std::vector<uint8_t> &out, int timeout_ms,
                      std::string &err, bool *timed_out) {
   auto s = impl_;

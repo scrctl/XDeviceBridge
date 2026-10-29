@@ -145,6 +145,9 @@ public:
     bool send_report(uint64_t service_id, std::span<const uint8_t> report, std::string &err,
                      xdb::xpc::Value *reply = nullptr);
 
+    /// 仅在最终清理后等待已发送字节被对端 TCP 确认，避免随隧道一起丢弃。
+    bool drain(int timeout_ms, std::string &err) { return conn_->tcp().drain(timeout_ms, err); }
+
     /// 向指定 service_id 发送主触摸屏格式的接触或抬起报告。
     /// x/y 是 0..1 的归一化屏幕坐标；调用方应选择支持该报告格式的面。
     bool touch(uint64_t service_id, double x, double y, bool down, std::string &err);

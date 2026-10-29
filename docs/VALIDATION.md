@@ -699,3 +699,20 @@ Samples varied with iOS launch/transition scheduling. These figures include that
 animation and end when the C client receives the frame; compositor and physical
 display scanout are excluded. They are not glass-to-glass video latency. Accurate
 screen-to-screen measurement still requires both displays in the same camera view.
+
+## Multi-touch development acceptance — 2026-10-29
+
+On iPhone14,4 / iOS 27.0.1 over Wi-Fi, a temporary Safari page reported native
+`touchstart`, `touchmove`, and `touchend` events for two and five simultaneous
+contacts. Releasing one of five preserved the other four identities; moving a
+remaining contact did not recreate it. Explicit session close and TCP client
+disconnect both returned the page to zero contacts within approximately 40–60 ms
+after the final-release TCP drain fix. Before that fix, last-session teardown
+could discard a queued release; retaining a read-only connection avoided it.
+
+MaaFramework's real C ABI delivered five concurrent contacts and its existing
+`MultiSwipe` pipeline delivered five simultaneous moving contacts, followed by
+zero contacts. Browser events were ordered by a client-side sequence number;
+parallel HTTP POST arrival order is not the device's touch event order.
+
+This records acceptance on one device, not all iOS versions or hardware models.

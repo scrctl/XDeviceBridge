@@ -151,6 +151,45 @@ void icmp_quotes() {
   require(diagnose(0, 39).find("53000->12345") == std::string::npos,
           "truncated IPv6 header does not report ports");
 }
+void drain_acknowledgements() {
+  MemoryTunnel a, b;
+  std::mutex held_mutex;
+  std::vector<std::vector<uint8_t>> held;
+  std::atomic<bool> hold{false};
+  a.deliver = [&](auto packet) { b.inject(std::move(packet)); };
+  b.deliver = [&](auto packet) {
+    std::lock_guard lock(held_mutex);
+    if (hold) held.push_back(std::move(packet));
+    else a.inject(std::move(packet));
+  };
+  Stack client(a, "fd00:5::1", "fd00:5::2"),
+      server(b, "fd00:5::2", "fd00:5::1");
+  std::string err;
+  require(client.start_pump(err) && server.start_pump(err), "drain stacks start");
+  Server peer(server);
+  TcpStream stream(client);
+  require(stream.connect(12345, err), "drain connect");
+  hold = true;
+  require(stream.send("release", err), "queue final release bytes");
+  until([&] { std::lock_guard lock(held_mutex); return !held.empty(); });
+  const auto started = std::chrono::steady_clock::now();
+  require(!stream.drain(40, err) && err == "TCP drain timed out", "unacknowledged release times out");
+  require(std::chrono::steady_clock::now() - started < 1s, "drain timeout is bounded");
+  {
+    std::lock_guard lock(held_mutex);
+    hold = false;
+    for (auto &packet : held) a.inject(std::move(packet));
+    held.clear();
+  }
+  require(stream.drain(1000, err), "drain succeeds after peer TCP acknowledgement");
+  hold = true;
+  require(stream.send("second", err), "queue data before interrupted drain");
+  auto pending = std::async(std::launch::async, [&] { std::string why; return stream.drain(5000, why); });
+  require(pending.wait_for(50ms) == std::future_status::timeout, "drain waits for outstanding bytes");
+  stream.close();
+  require(pending.wait_for(1s) == std::future_status::ready && !pending.get(), "close interrupts drain");
+}
+
 void exercise() {
   MemoryTunnel a, b;
   std::atomic<bool> drop_syn{true}, drop_data{true};
@@ -305,6 +344,7 @@ void close_and_cancel() {
 int main() {
   try {
     icmp_quotes();
+    drain_acknowledgements();
     exercise();
     pending_connect();
     close_and_cancel();
