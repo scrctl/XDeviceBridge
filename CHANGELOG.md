@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1 — 2026-10-30
+
+- Fix Windows SDK header compatibility when building the native DNS-SD backend
+  from source. Include the user-mode IP Helper header instead of including
+  `netioapi.h` directly. Runtime behavior, C ABI 1 and RPC protocol 1 are unchanged.
+
 ## 1.5.0 — 2026-10-30
 
 - Add local `version` / `--version` output and a `help` command alias.

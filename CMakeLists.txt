@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(XDeviceBridge VERSION 1.5.0 LANGUAGES CXX)
+project(XDeviceBridge VERSION 1.5.1 LANGUAGES CXX)
 configure_file(cmake/version.h.in include/xdb/version.h @ONLY)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
