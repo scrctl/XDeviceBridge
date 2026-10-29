@@ -232,7 +232,7 @@ raw requests. `rpc-shell` maintains a client session; it is not an iOS command s
 - Discovery, USB/Wi-Fi pairing and DDI download/preparation.
 - One device session per client connection; default control is exclusive, with capability-negotiated shared groups.
 - PNG screenshots; decoded latest-frame BGRA video with display geometry metadata.
-- Single-contact panel-normalized touch, keyboard usages, ASCII text, consumer keys and app control.
+- Up to five panel-normalized touch contacts, keyboard usages, ASCII text, consumer keys and app control.
 - Binary media is framed separately from JSON, never Base64-encoded. Only one outstanding
   request per connection; frame polling returns the latest/newer frame rather than queuing all frames.
 - Some operations can already have changed the phone when a transport failure is reported.

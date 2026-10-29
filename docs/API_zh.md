@@ -67,7 +67,7 @@ attachment 继承创建时的读／控制类型，不能把只读 attachment 附
 | device_busy | 其他会话／操作持有设备租约，或手动连接阻止管理操作。先关闭会话／附着连接，或 disconnect 手动连接。 |
 | exclusive_session_required | 共享控制组请求录制或全局媒体关闭；使用独占会话，或关闭本组关联。 |
 | media_conflict | 共享视频的参数与当前生产者不一致；使用相同参数。 |
-| input_busy | 其他共享组正在使用单触点，或共享键盘仍有按住的键。 |
+| input_busy | 其他共享组正在持有触摸手势，或共享键盘仍有按住的键。 |
 | read_only_session | 当前设备关联为只读，拒绝输入、媒体配置、音频队列读取及管理修改；不是本机进程鉴权。 |
 | not_paired | connect 没有可用的本地 Wi-Fi 凭据；请先配对。 |
 | invalid_state | 当前连接或媒体状态不能执行该方法。修正调用顺序。 |
@@ -319,7 +319,7 @@ shared 模式须先检查 `capabilities.shared_control_sessions:true`，旧 Serv
 相同 `video.start` 参数复用视频，解码方式或恢复参数冲突返回 `media_conflict`。
 共享组不支持录制、`video.stop` 或 `media.finish`，这些调用返回 `exclusive_session_required`；
 退出时关闭该组所有套接字，最后一组退出才结束视频。轮询／作业套接字 attach 到原组，
-不会成为新的独立组。退出一组会释放其输入；各组按键取并集，单触点占用冲突返回 `input_busy`。
+不会成为新的独立组。退出一组会释放其输入；各组按键取并集，触摸手势占用冲突返回 `input_busy`。
 `input.text` 要求共享键盘没有按住的键。音频只允许一个控制组消费，其他组的音频请求返回
 `device_busy`；音频拥有者退出会停音频，但不会停止剩余组的视频，也不自动转移音频。
 
@@ -388,9 +388,13 @@ RPC 结果之前返回 `operation_failed`。
 ### `input.touch`
 
 需要会话。`x`、`y` 为**必填**有限数值，范围 0..1；`down` 为**必填**布尔值。
-返回 `{}`。重复 down 报告用于移动单个触点，false 用于释放。
-焦点或手势结束时调用方必须释放。最终会话清理会尝试释放；
-保留其他附着连接也会保持共享会话存活。
+Server 1.4.0 起支持可选整数 `contact`：0..4，默认 0。返回 `{}`。
+重复 down 报告移动指定触点，false 只释放该触点；每份 HID 报告保留其他仍按下的触点。
+焦点或手势结束时调用方必须释放。最终会话清理会尝试释放全部触点；
+附着连接保留其控制组的生命周期。
+
+多点调用方必须要求 Server 1.4.0 或更新版本，旧 Server 可能静默忽略 `contact`；
+不新增能力标记。共享组在全部触点抬起前持有整个手势。`input.tap` 使用触点 0。
 
 ### `input.keyboard`
 

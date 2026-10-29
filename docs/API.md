@@ -74,7 +74,7 @@ not a transaction mechanism for multiple control clients.
 | device_busy | Device lease held by another session/operation, or a manual connection blocks management. Close sessions/attachments or disconnect the manual connection. |
 | exclusive_session_required | Shared group requested recording or global media shutdown; use an exclusive association or close this group instead. |
 | media_conflict | Shared video options differ from the current producer; use matching options. |
-| input_busy | Another shared group owns the single touch contact, or shared keyboard keys are held. |
+| input_busy | Another shared group owns the touch gesture, or shared keyboard keys are held. |
 | read_only_session | The device association is read-only; rejects input, media configuration, consuming audio reads and management mutations. Not process authentication. |
 | not_paired | No usable local Wi-Fi record for connect. Pair first. |
 | invalid_state | Method not valid for current connection/media state; fix ordering. |
@@ -369,7 +369,7 @@ Shared groups cannot record, call `video.stop`, or call `media.finish`
 (`exclusive_session_required`). Close all sockets in a group to leave; only the
 last control group stops video. Attached poll/job sockets belong to their original
 group. Departure releases that group's input: keyboard usages/buttons are merged,
-while the single touch contact returns `input_busy` when another group holds it.
+while touch returns `input_busy` when another group holds any contacts in a gesture.
 `input.text` requires no held shared keyboard keys. Only one group may consume
 audio; other groups' audio requests return `device_busy`. Audio stops when its
 owner leaves, without stopping the remaining video or automatically transferring
@@ -446,9 +446,15 @@ No UI hit-test confirmation. Coordinates are not client-window pixels.
 ### `input.touch`
 
 Session required. `x`, `y`: finite numbers **required**, 0..1; `down`: bool
-**required**. Result `{}`. Repeated down reports move the single contact; false
-releases it. Callers must release when focus/gesture ends. Final session cleanup
-attempts release; keeping another attachment alive keeps the shared session alive.
+**required**. Since Server 1.4.0, optional integer `contact`: 0..4, default 0.
+Result `{}`. Repeated down reports move the specified contact; false releases
+only that contact. Server includes the other active contacts in every HID report.
+Callers must release when focus/gesture ends; final session cleanup attempts to
+lift every contact. Attached sockets retain their control group's lifetime.
+
+Multi-contact callers must require Server 1.4.0 or later. Older Servers may
+silently ignore `contact`; no new capability flag is used. Shared groups retain
+whole-gesture ownership until all contacts lift. `input.tap` uses contact 0.
 
 ### `input.keyboard`
 
