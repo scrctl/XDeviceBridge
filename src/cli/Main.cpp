@@ -153,7 +153,10 @@ int main(int argc, char **argv) {
                 show_help = true;
             else if (a == "--version")
                 show_version = true;
-            else if (a == "--wifi") {
+            else if (a == "-e") {
+                wifi = true;
+                if (wifi_address.empty()) wifi_address = "auto";
+            } else if (a == "--wifi") {
                 wifi = true;
                 wifi_address = "auto";
                 if (i + 1 < argc) {
@@ -164,7 +167,7 @@ int main(int argc, char **argv) {
                         ++i;
                     }
                 }
-            } else if (a == "--usb")
+            } else if (a == "--usb" || a == "-d")
                 usb = true;
             else if (a == "--replace")
                 replace = true;
@@ -214,7 +217,7 @@ int main(int argc, char **argv) {
         if (!explicit_serial)
             serial = env("XDB_SERIAL");
         if (wifi && usb)
-            throw std::invalid_argument("Choose --usb or --wifi");
+            throw std::invalid_argument("Choose -d/--usb or -e/--wifi");
         if (args.empty())
             throw std::invalid_argument("Missing command");
         if (display_brand && args[0] != "pair")

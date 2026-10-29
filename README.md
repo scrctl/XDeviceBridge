@@ -132,7 +132,9 @@ overrides it. Without either, device commands select a sole available device.
 `discovered`, `paired` or `connected` from the same snapshot as `devices`.
 These queries open no device session and fail for missing or ambiguous devices.
 `paired` does not establish connectivity, and `connected` is not a fresh liveness probe.
-Both support `-s`, `XDB_SERIAL`, `--usb`/`--wifi`, `--timeout MS` and `--json`.
+Like adb, `-d` selects USB transport and `-e` selects network transport. The long
+forms `--usb` and `--wifi [ADDRESS]` remain available; only `--wifi` accepts an address.
+Both queries support these selectors, `-s`, `XDB_SERIAL`, `--timeout MS` and `--json`.
 
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.

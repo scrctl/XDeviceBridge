@@ -22,7 +22,7 @@ constexpr CommandHelp commands[] = {
      "Show the local executable version, installation path and running platform.\n"
      "This does not start or connect to a server. Use xdb rpc server.info\n"
      "to query the running server version.\n"},
-    {"get-state", "xdb [-s UDID] get-state [--usb|--wifi [ADDRESS]] [--timeout MS] [--json]",
+    {"get-state", "xdb [-d|-e] [-s UDID] get-state [--wifi ADDRESS] [--timeout MS] [--json]",
      "Print discovered, paired or connected for the selected device.\n\n"
      "Uses the same discovery snapshot as devices, without opening a device session.\n"
      "paired means a matching local record; connected means an authenticated\n"
@@ -30,18 +30,18 @@ constexpr CommandHelp commands[] = {
      "A sole manual connection is preferred over unrelated discovery.\n"
      "Missing or ambiguous devices fail without printing a state.\n\n"
      "Example:\n  xdb -s UDID get-state\n"},
-    {"get-serialno", "xdb [-s UDID] get-serialno [--usb|--wifi [ADDRESS]] [--timeout MS] [--json]",
+    {"get-serialno", "xdb [-d|-e] [-s UDID] get-serialno [--wifi ADDRESS] [--timeout MS] [--json]",
      "Print the UDID of a selected discovered or manually connected device.\n\n"
      "Use -s UDID or XDB_SERIAL when several devices are available.\n"
      "A sole manual connection is preferred; otherwise select a sole device.\n"
      "No device session is opened.\n"
      "Missing or ambiguous devices fail without printing a UDID.\n\n"
-     "Example:\n  xdb get-serialno\n"},
-    {"devices", "xdb devices [-l] [--usb|--wifi] [--timeout MS] [--json]",
+     "Examples:\n  xdb get-serialno\n  xdb -d get-serialno\n  xdb -e get-serialno\n"},
+    {"devices", "xdb devices [-l] [-d|-e] [--timeout MS] [--json]",
      "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
-     "  --usb          Discover USB devices only\n"
-     "  --wifi         Discover Wi-Fi devices only\n"
+     "  -d, --usb      Discover USB devices only\n"
+     "  -e, --wifi     Discover network devices only\n"
      "  --timeout MS   Discovery timeout (default: 3000; range: 0..60000)\n"
      "  --json         Print the complete JSON response\n\n"
      "States:\n"
@@ -66,10 +66,10 @@ constexpr CommandHelp commands[] = {
      "Pairing records and DDI are preserved. Already disconnected is success.\n"
      "An endpoint and -s together must both match.\n\n"
      "Examples:\n  xdb disconnect 192.168.1.10\n  xdb -s UDID disconnect\n  xdb disconnect\n"},
-    {"pair", "xdb [-s UDID] pair [--wifi|--usb] [--display-brand NAME] [--timeout MS] [--json]",
+    {"pair", "xdb [-d|-e] [-s UDID] pair [--display-brand NAME] [--timeout MS] [--json]",
      "Pair with an iOS device. Wi-Fi pairing is the default.\n\n"
-     "  --wifi         Advertise this computer for Wi-Fi pairing\n"
-     "  --usb          Pair through the system USB device service\n"
+     "  -e, --wifi     Advertise this computer for Wi-Fi pairing\n"
+     "  -d, --usb      Pair through the system USB device service\n"
      "  --display-brand NAME  Display prefix for new pairing (default: xdb)\n"
      "  --timeout MS   Pairing timeout (default: 120000; range: 1..300000)\n\n"
      "For Wi-Fi, open Settings > Privacy & Security > Developer Mode on the device,\n"
@@ -160,6 +160,9 @@ void print_help(std::span<const std::string> command) {
                      "  rpc                 Send a JSON RPC request\n"
                      "  rpc-shell           Open the JSON debugging console\n\n"
                      "Options:\n"
+                     "  -d, --usb           Use USB transport\n"
+                     "  -e                  Use network transport\n"
+                     "  --wifi [ADDRESS]    Use network transport, optionally by address\n"
                      "  -s, --serial UDID   Select a device (overrides XDB_SERIAL)\n"
                      "  --port PORT         Server port (default: 17423; env: XDB_PORT)\n"
                      "  --data-dir DIR      Pairing data directory for a new server\n"

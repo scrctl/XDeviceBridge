@@ -127,7 +127,8 @@ C ABI 定义位于 [xdb.h](include/xdb/xdb.h)，通信协议见[通信协议说�
 `xdb get-serialno` 输出所选设备的 UDID；`xdb get-state` 使用与 `devices` 相同的快照，
 输出 `discovered`、`paired` 或 `connected`。查询不打开设备会话，无设备或选择不明确时返回失败。
 `paired` 不代表当前可连接，`connected` 也不是一次新的连通性探测。
-两者均支持 `-s`、`XDB_SERIAL`、`--usb`／`--wifi`、`--timeout MS` 和 `--json`。
+与 adb 一样，`-d` 选择 USB，`-e` 选择网络传输。长参数 `--usb` 和 `--wifi [ADDRESS]` 继续可用，
+只有 `--wifi` 接受地址。两个查询命令均支持这些选择参数、`-s`、`XDB_SERIAL`、`--timeout MS` 和 `--json`。
 
 桌面端 CLI 和 SDK 会在需要时自动启动后台 Server。客户端退出后，Server 继续运行，
 供其他客户端复用。它只监听本机回环地址，默认端口为 `17423`；本机客户端不需要访问令牌。

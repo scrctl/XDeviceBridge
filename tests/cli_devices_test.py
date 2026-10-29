@@ -126,6 +126,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                  ('connect', '10.0.0.7:abc'), ('connect', '10.0.0.7:65536'),
                  ('connect', '10.0.0.7:'), ('connect', '[::1]:-1'),
                  ('connect', '10.0.0.7', '--usb'), ('connect', '10.0.0.7', '--timeout', '0'),
+                 ('-d', '-e', 'get-state'), ('--usb', '-e', 'get-state'), ('-d', '--wifi', 'get-state'),
                  ('get-state', 'extra'), ('get-serialno', 'extra')):
         run(*args, ok=False)
     assert server.methods() == before_help, 'invalid endpoint contacted the server'
@@ -174,6 +175,10 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert json.loads(run('devices', '--json').stdout)['result']['devices'] == devices
     before_query = len(server.calls)
     assert run('get-serialno').stdout == 'mock-iphone\n'
+    assert run('-d', 'get-serialno').stdout == 'mock-iphone\n'
+    assert server.calls[-1] == ('devices', dict(transport='usb'))
+    assert run('get-serialno', '-e').stdout == 'mock-iphone\n'
+    assert server.calls[-1] == ('devices', dict(transport='wifi'))
     for state in ('discovered', 'paired', 'connected'):
         devices[0]['state'] = state
         assert run('get-state').stdout == state + '\n'
@@ -193,6 +198,8 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert json.loads(run('devices', '-l', '--json').stdout)['result']['devices'] == devices
     devices[0] = saved_device
     target = str(Path(tmp) / 'screen.png')
+    run('screenshot', '-e', target)
+    assert any(name == 'connection.open' and p.get('transport') == 'wifi' for name, p in server.calls)
     run('screenshot', target, '--wifi')
     assert Path(target).read_bytes().startswith(b'\x89PNG')
     assert any(name == 'connection.open' and p.get('access') == 'read' for name, p in server.calls)
