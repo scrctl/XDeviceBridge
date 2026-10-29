@@ -6,6 +6,7 @@
 #include "ipc/Wire.h"
 #include "xdb/xdb.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -18,7 +19,8 @@
 #include <thread>
 using Json = nlohmann::json;
 namespace {
-volatile std::sig_atomic_t stopping = 0;
+static_assert(std::atomic<int>::is_always_lock_free);
+std::atomic<int> stopping{0};
 void stop(int) { stopping = 1; }
 const char *env(const char *name) {
     auto *value = std::getenv(name);
@@ -92,6 +94,12 @@ void print_devices(const Json &result, bool detailed) {
         std::cerr << "warning: " << warning.get<std::string>() << '\n';
 }
 
+struct SelectionError : std::invalid_argument {
+    bool ambiguous;
+    SelectionError(std::string message, bool multiple)
+        : std::invalid_argument(std::move(message)), ambiguous(multiple) {}
+};
+
 const Json &select_device(const Json &devices, const std::string &serial,
                           bool prefer_manual, const std::string &wifi_address) {
     std::set<std::string> identifiers, manual;
@@ -119,15 +127,15 @@ const Json &select_device(const Json &devices, const std::string &serial,
         unidentified = false;
     }
     if (identifiers.empty()) {
-        if (!serial.empty()) throw std::invalid_argument("Device not found: " + serial);
-        throw std::invalid_argument(unidentified ? "Discovered device has no known UDID; pair it first"
-                                                 : "No device found");
+        if (!serial.empty()) throw SelectionError("Device not found: " + serial, false);
+        throw SelectionError(unidentified ? "Discovered device has no known UDID; pair it first"
+                                         : "No device found", false);
     }
     if (identifiers.size() > 1 || unidentified) {
         std::string message = "Multiple devices; select one with -s UDID:";
         for (const auto &id : identifiers) message += " " + id;
         if (unidentified) message += " (also unidentified devices)";
-        throw std::invalid_argument(message);
+        throw SelectionError(message, true);
     }
     return *std::find_if(devices.begin(), devices.end(), [&](const auto &device) {
         return device.value("udid", std::string()) == *identifiers.begin();
@@ -257,10 +265,10 @@ int main(int argc, char **argv) {
         }
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
             args[0] != "rpc" && args[0] != "rpc-shell" && args[0] != "connect" && args[0] != "disconnect" &&
-            args[0] != "get-state" && args[0] != "get-serialno")
+            args[0] != "get-state" && args[0] != "get-serialno" && args[0] != "wait-for-device")
             throw std::invalid_argument("Unknown command; run xdb --help");
         const bool query_device = args[0] == "get-state" || args[0] == "get-serialno";
-        if (query_device && args.size() != 1)
+        if ((query_device || args[0] == "wait-for-device") && args.size() != 1)
             throw std::invalid_argument("Unexpected argument for " + args[0]);
         std::optional<xdb::ipc::Endpoint> endpoint;
         if (args[0] == "connect" || args[0] == "disconnect") {
@@ -289,7 +297,7 @@ int main(int argc, char **argv) {
             std::cerr << xdb_last_error() << '\n';
             return 1;
         }
-        auto request = [&](const std::string &method, const Json &params, bool display = true) {
+        auto request = [&](const std::string &method, const Json &params, bool display = true, bool quiet = false) {
             auto text = params.dump();
             xdb_response *raw = nullptr;
             if (!xdb_client_request(client.get(), method.c_str(), text.c_str(), &raw))
@@ -300,7 +308,7 @@ int main(int argc, char **argv) {
             if (!value.value("ok", false)) {
                 if (display && json_output)
                     std::cout << value.dump() << '\n';
-                else
+                else if (!quiet)
                     std::cerr << value["error"].value("message", std::string("Request failed")) << '\n';
                 return value;
             }
@@ -354,6 +362,77 @@ int main(int argc, char **argv) {
             }
             return value;
         };
+        if (args[0] == "wait-for-device") {
+            // Only this command owns signal handling and interrupts its own RPC socket.
+            std::signal(SIGINT, stop);
+            std::signal(SIGTERM, stop);
+            const auto deadline = timeout > 0
+                ? std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout)
+                : std::chrono::steady_clock::time_point::max();
+            std::atomic<bool> expired{false};
+            std::jthread interrupt([&](std::stop_token token) {
+                while (!token.stop_requested()) {
+                    if (stopping || std::chrono::steady_clock::now() >= deadline) {
+                        expired = !stopping;
+                        xdb_client_interrupt(client.get());
+                        return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                }
+            });
+            std::string last_error;
+            try {
+                const auto info = request("server.info", Json::object(), false, true);
+                if (!info.value("ok", false) || !info.value("result", Json::object())
+                        .value("capabilities", Json::object()).value("read_only_sessions", false))
+                    throw std::runtime_error("wait-for-device requires a Server with read-only sessions; upgrade xdb Server");
+                while (!stopping && !expired) {
+                    try {
+                        auto selected = serial;
+                        if (selected.empty()) {
+                            auto found = request("devices", {{"transport", usb ? "usb" : wifi ? "wifi" : "auto"},
+                                                             {"timeout_ms", 250}}, false, true);
+                            if (!found.value("ok", false))
+                                throw std::runtime_error(found["error"].value("message", std::string("Discovery failed")));
+                            if (found["result"].value("cancelled", false))
+                                throw std::runtime_error("Device discovery was cancelled");
+                            selected = select_device(found["result"]["devices"], "", !usb,
+                                                     wifi ? wifi_address : "").at("udid").get<std::string>();
+                        }
+                        Json params = {{"udid", selected}, {"access", "read"},
+                                       {"transport", usb ? "usb" : wifi ? "wifi" : "auto"}};
+                        if (wifi) params["wifi"] = wifi_address;
+                        auto opened = request("connection.open", params, false, true);
+                        if (opened.value("ok", false)) {
+                            if (!request("connection.close", Json::object(), false, true).value("ok", false))
+                                throw std::runtime_error("Failed to close wait-for-device probe");
+                            if (stopping || expired) break;
+                            if (json_output) {
+                                opened["result"] = {{"udid", selected}, {"state", "connected"}};
+                                std::cout << opened.dump() << '\n';
+                            }
+                            return 0;
+                        }
+                        last_error = opened["error"].value("message", std::string("Connection failed"));
+                    } catch (const SelectionError &e) {
+                        if (e.ambiguous) throw;
+                        last_error = e.what();
+                    }
+                    const auto retry = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+                    while (!stopping && !expired && std::chrono::steady_clock::now() < retry)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                }
+            } catch (const std::exception &e) {
+                if (!stopping && !expired) throw;
+            }
+            const auto message = stopping ? std::string("Wait cancelled")
+                : "Timed out waiting for a connectable device" + (last_error.empty() ? "" : ": " + last_error);
+            if (json_output)
+                std::cout << Json{{"ok", false}, {"error", {{"code", stopping ? "cancelled" : "timeout"},
+                                                           {"message", message}}}}.dump() << '\n';
+            else std::cerr << message << '\n';
+            return stopping ? 130 : 124;
+        }
         if (args[0] == "rpc-shell") {
             std::string line;
             while (std::getline(std::cin, line)) {

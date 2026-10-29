@@ -37,6 +37,16 @@ constexpr CommandHelp commands[] = {
      "No device session is opened.\n"
      "Missing or ambiguous devices fail without printing a UDID.\n\n"
      "Examples:\n  xdb get-serialno\n  xdb -d get-serialno\n  xdb -e get-serialno\n"},
+    {"wait-for-device", "xdb [-d|-e] [-s UDID] wait-for-device [--wifi ADDRESS] [--timeout MS] [--json]",
+     "Wait until the selected device accepts a read-only development connection.\n\n"
+     "Opens and closes a temporary read-only session; starts no media, sends no input\n"
+     "and does not pair, prepare DDI or keep a manual connection. Prepare DDI first.\n"
+     "Uses -s or XDB_SERIAL, or waits for a sole identified device. Ambiguity fails.\n"
+     "Connection failures are retried without changing pairing records.\n"
+     "Default/--timeout 0 waits indefinitely; 1..300000 bounds the entire wait\n"
+     "after connecting to the local Server, including pending device RPCs.\n"
+     "Success is silent (or JSON); timeout exits 124, Ctrl+C exits 130.\n\n"
+     "Example:\n  xdb -e wait-for-device --timeout 30000\n"},
     {"devices", "xdb devices [-l] [-d|-e] [--timeout MS] [--json]",
      "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
@@ -146,6 +156,7 @@ void print_help(std::span<const std::string> command) {
                      "  devices [-l]        List discovered devices\n"
                      "  get-state           Print the selected device state\n"
                      "  get-serialno        Print the selected device UDID\n"
+                     "  wait-for-device     Wait for a connectable device\n"
                      "  pair                Pair with an iOS device\n"
                      "  connect HOST[:PORT] Keep a paired Wi-Fi connection in the server\n"
                      "  disconnect [HOST]   Close manual Wi-Fi connections\n"

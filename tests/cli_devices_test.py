@@ -4,6 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
+import time
+import threading
 import sys
 import tempfile
 
@@ -95,7 +98,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
                     ('screenshot',), ('connect',), ('disconnect',), ('start-server',), ('kill-server',), ('server',),
-                    ('rpc',), ('rpc-shell',), ('version',), ('get-state',), ('get-serialno',)):
+                    ('rpc',), ('rpc-shell',), ('version',), ('get-state',), ('get-serialno',), ('wait-for-device',)):
         args = command if command == ('-h',) else (*command, '--help')
         assert 'Usage:' in run(*args).stdout
     assert 'connectivity' in run('devices', '--help').stdout
@@ -298,6 +301,73 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         assert 'No device found' in missing.stderr and not missing.stdout
     for action in ('status', 'remove'):
         assert 'No device found' in run('ddi', action, ok=False).stderr
+    # Waiting probes real connection acceptance, not just the paired snapshot.
+    devices[:] = [copy.deepcopy(phone)]
+    wait_opens = 0
+    wait_hang = False
+    wait_entered = threading.Event()
+    def waiting(name, params):
+        global wait_opens
+        if name == 'connection.open':
+            with server.lock:
+                server.calls.append((name, params))
+            assert params in (dict(udid='mock-iphone', transport='wifi', wifi='auto', access='read'),
+                              dict(udid='mock-iphone', transport='wifi', wifi='10.0.0.7', access='read'))
+            wait_opens += 1
+            wait_entered.set()
+            if wait_hang:
+                time.sleep(2)
+                raise ValueError('Device still locked')
+            if wait_opens == 1:
+                raise ValueError('Device still locked')
+            return dict(udid='mock-iphone', access='read'), b''
+        return handle(name, params)
+    server.handle_call = waiting
+    start = len(server.calls)
+    waited = run('-e', 'wait-for-device', '--timeout', '2000')
+    assert waited.stdout == '' and waited.stderr == '' and wait_opens == 2
+    assert server.calls[-1] == ('connection.close', {})
+    assert not any(name.startswith(('input.', 'video.', 'audio.')) or name == 'connect'
+                   for name, _ in server.calls[start:])
+    result = json.loads(run('-e', 'wait-for-device', '--json', '--timeout', '1000', serial='mock-iphone').stdout)
+    assert result['result'] == dict(udid='mock-iphone', state='connected')
+    devices.clear()
+    start = len(server.calls)
+    run('-s', 'mock-iphone', '--wifi', '10.0.0.7', 'wait-for-device', '--timeout', '1000')
+    assert not any(name == 'devices' for name, _ in server.calls[start:]), 'explicit target must bypass discovery'
+    devices[:] = [copy.deepcopy(phone)]
+
+    devices.append(dict(phone, udid='another-phone'))
+    before = wait_opens
+    assert 'Multiple devices' in run('-e', 'wait-for-device', '--timeout', '1000', ok=False).stderr
+    assert wait_opens == before
+    devices.clear()
+    timed = run('wait-for-device', '--timeout', '80', '--json', ok=False)
+    assert timed.returncode == 124 and json.loads(timed.stdout)['error']['code'] == 'timeout'
+    devices[:] = [copy.deepcopy(phone)]
+    wait_hang = True
+    wait_entered.clear()
+    started = time.monotonic()
+    timed = run('-e', 'wait-for-device', '--timeout', '100', ok=False)
+    assert timed.returncode == 124 and time.monotonic() - started < 1.5
+    assert wait_entered.is_set(), 'timeout did not cover an in-flight connection probe'
+    # Windows consoles deliver Ctrl+C through a console process group, not Popen.send_signal.
+    if os.name != 'nt':
+        wait_entered.clear()
+        process = subprocess.Popen([exe, '--port', str(server.server_address[1]), '-e', 'wait-for-device'],
+                                   env=dict(os.environ, XDB_SERIAL=''), stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        try:
+            assert wait_entered.wait(2)
+            process.send_signal(signal.SIGINT)
+            out, err = process.communicate(timeout=2)
+            assert process.returncode == 130 and not out and 'cancelled' in err
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    server.handle_call = handle
+    devices.clear()
     cancelled = True
     assert 'cancelled' in run('screenshot', target, ok=False).stderr
 print('PASS: device listing, DDI commands, JSON results, transport and automatic selection errors')
