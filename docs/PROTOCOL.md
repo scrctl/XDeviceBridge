@@ -99,6 +99,7 @@ is a quick summary rather than the full method contract.
 | `server.info` | none | Protocol, server version and process ID |
 | `server.stop` | none | Requests shutdown after replying; all sessions are cancelled |
 | `devices` | `transport`: auto/usb/wifi; `timeout_ms`: 0..60000 | Devices, candidates, warnings |
+| `mdns.check` / `mdns.services` | optional `timeout_ms`: 1..60000 | Discovery backend, availability, warnings; services also lists raw service endpoints |
 | `connect` | `address`, optional `port`, `udid`, `timeout_ms` | Authenticated Server-owned Wi-Fi base connection; no discovery required |
 | `disconnect` | optional `address`, `port`, `udid` | Closes matching manual connections and invalidates attached sessions; preserves records/DDI |
 | `pair` | `transport`: wifi/usb; optional `udid`; `timeout_ms`: 1..300000 | UDID and reused status; progress/PIN events |

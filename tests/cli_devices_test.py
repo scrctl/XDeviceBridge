@@ -35,11 +35,13 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     manual_connected = False
     manual_supported = True
     read_only_supported = True
+    mdns_supported = True
+    mdns_available = True
 
     def handle(name, params):
         global manual_connected
         if name == 'server.info':
-            return dict(capabilities=dict(pairing_display_brand=branding_supported, manual_connections=manual_supported, read_only_sessions=read_only_supported)), b''
+            return dict(capabilities=dict(mdns_diagnostics=mdns_supported, pairing_display_brand=branding_supported, manual_connections=manual_supported, read_only_sessions=read_only_supported)), b''
         if name in ('connect', 'disconnect'):
             with server.lock:
                 server.calls.append((name, params))
@@ -50,6 +52,17 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
                 return result, b''
             manual_connected = False
             return dict(disconnected=[dict(udid='mock-iphone', address='10.0.0.7', port=49152)]), b''
+        if name in ('mdns.check', 'mdns.services'):
+            with server.lock:
+                server.calls.append((name, params))
+            result = dict(backend='bonjour', available=mdns_available, cancelled=False,
+                          warnings=[] if mdns_available else ['Native daemon unavailable'],
+                          service_type='_remotepairing._tcp.local.')
+            if name == 'mdns.services':
+                result['services'] = [dict(instance='Test._remotepairing._tcp.local.', name='',
+                                          target='test.local.', endpoints=[dict(address='fe80::1%4', port=49152,
+                                          interface='en0', interface_index=4)])] if mdns_available else []
+            return result, b''
         if name == 'pair':
             with server.lock:
                 server.calls.append((name, params))
@@ -98,7 +111,7 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
                     ('screenshot',), ('connect',), ('disconnect',), ('start-server',), ('kill-server',), ('server',),
-                    ('rpc',), ('rpc-shell',), ('version',), ('get-state',), ('get-serialno',), ('wait-for-device',)):
+                    ('rpc',), ('rpc-shell',), ('version',), ('get-state',), ('get-serialno',), ('wait-for-device',), ('mdns',), ('mdns', 'check'), ('mdns', 'services')):
         args = command if command == ('-h',) else (*command, '--help')
         assert 'Usage:' in run(*args).stdout
     assert 'connectivity' in run('devices', '--help').stdout
@@ -301,6 +314,26 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         assert 'No device found' in missing.stderr and not missing.stdout
     for action in ('status', 'remove'):
         assert 'No device found' in run('ddi', action, ok=False).stderr
+    start = len(server.calls)
+    assert 'bonjour (available)' in run('mdns', 'check').stdout
+    assert server.calls[-1] == ('mdns.check', {})
+    services = run('mdns', 'services', '--timeout', '25').stdout
+    assert 'Test._remotepairing._tcp.local.' in services and '[fe80::1%4]:49152' in services
+    assert server.calls[-1] == ('mdns.services', dict(timeout_ms=25))
+    assert json.loads(run('mdns', 'services', '--json').stdout)['result']['available']
+    assert not any(name in ('devices', 'connection.open', 'connect', 'pair') for name, _ in server.calls[start:])
+    mdns_available = False
+    unavailable = run('mdns', 'check', ok=False)
+    assert 'unavailable' in unavailable.stdout and 'Native daemon unavailable' in unavailable.stderr
+    assert not json.loads(run('mdns', 'services', '--json', ok=False).stdout)['result']['available']
+    mdns_supported = False
+    assert 'upgrade xdb Server' in run('mdns', 'check', ok=False).stderr
+    mdns_supported = True
+    mdns_available = True
+    assert run('mdns').stdout == run('mdns', '--help').stdout
+    for params in (('mdns', 'bad'), ('mdns', 'check', 'extra'), ('mdns', 'services', '--timeout', '0'),
+                   ('mdns', 'check', '--timeout', '60001')):
+        run(*params, ok=False)
     # Waiting probes real connection acceptance, not just the paired snapshot.
     devices[:] = [copy.deepcopy(phone)]
     wait_opens = 0

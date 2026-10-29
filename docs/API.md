@@ -42,7 +42,7 @@ local processes. Phone authentication is separate. Credentials stay in Server.
 
 | State | Methods available |
 | --- | --- |
-| Connected SDK / completed hello, no device session | server.info, server.stop, devices, pair, connect, disconnect, ddi.download, ddi.prepare, connection.open, connection.attach, connection.close |
+| Connected SDK / completed hello, no device session | server.info, server.stop, devices, mdns.check, mdns.services, pair, connect, disconnect, ddi.download, ddi.prepare, connection.open, connection.attach, connection.close |
 | Device session owned or attached | All above plus device/display/input/app/clipboard/media methods; another open/attach on this connection fails |
 | Detached by connection.close | Management methods available again; open/attach can create a new association |
 | Interrupted, transport failed, destroyed | Discard client; reconnect with a new handle |
@@ -125,6 +125,8 @@ up to 1.2.0 ignore unknown fields and cannot enforce the read role. The screensh
 CLI probes the capability and retains legacy behavior on older Servers.
 `capabilities.shared_control_sessions:true` separately advertises explicit shared control groups below. C ABI and wire protocol remain 1.
 
+`capabilities.mdns_diagnostics:true` advertises `mdns.check` and `mdns.services`; absence means unsupported.
+
 ### `server.stop`
 
 No params/session required. Result `{}` is sent before shutdown is requested.
@@ -202,6 +204,19 @@ is success when no connection matched. Invalidates active sessions borrowing tho
 connections; later device calls return `not_connected` and old attachments cannot
 be reused. Pairing records, DDI and unrelated sessions remain untouched.
 Close/disconnect manual connections before pairing or DDI management.
+
+### `mdns.check` / `mdns.services`
+
+No device session required. Probe `server.info.capabilities.mdns_diagnostics` for support.
+Optional integer `timeout_ms`: 1..60000, default 3000. Uses the Server's subscription cache
+or a bounded query when unavailable. Queries only `_remotepairing._tcp.local.`;
+reads no pairing credentials, authenticates no device and starts no media.
+Both return `{backend:string,available:bool,cancelled:bool,warnings:string[],service_type:string}`.
+`backend` identifies the attempted `bonjour`, `avahi`, `windows-dnssd`, `android-nsd` or `direct` backend.
+`available` means queries can run; an empty service list does not mean the backend is unavailable.
+`mdns.services` also returns a `services` array with entries
+`{instance:string,name:string,target:string,endpoints:[{address:string,port:uint16,interface:string,interface_index:uint}]}`.
+No raw TXT, pairing matches or authentication conclusions are returned. Cancellation may retain a partial snapshot.
 
 ### `pair`
 

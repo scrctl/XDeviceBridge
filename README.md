@@ -138,6 +138,8 @@ Both queries support these selectors, `-s`, `XDB_SERIAL`, `--timeout MS` and `--
 
 `xdb [-d|-e] wait-for-device [--timeout MS]` waits for an authenticated read-only development connection, then releases its probe. It starts no media and keeps no manual connection; prepare pairing and DDI beforehand. The default (or `--timeout 0`) waits indefinitely, after connecting to the local Server. A positive timeout bounds discovery and pending device RPCs (exit 124); Ctrl+C cancels (exit 130). Multiple devices require a selector. Success is silent, or use `--json`.
 
+Use `xdb mdns check` to report the Server discovery backend and availability, or `xdb mdns services` to list received iOS services and endpoints. Both accept `--timeout MS` and `--json`, without authenticating or connecting to phones. No services does not imply an unavailable backend.
+
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.
 It listens only on loopback (default port 17423); local clients need no access token.

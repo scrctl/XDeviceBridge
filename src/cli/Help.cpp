@@ -47,6 +47,16 @@ constexpr CommandHelp commands[] = {
      "after connecting to the local Server, including pending device RPCs.\n"
      "Success is silent (or JSON); timeout exits 124, Ctrl+C exits 130.\n\n"
      "Example:\n  xdb -e wait-for-device --timeout 30000\n"},
+    {"mdns", "xdb mdns <check|services> [--timeout MS] [--json]",
+     "Diagnose the Server's iOS service discovery without connecting to devices.\n\n"
+     "  check          Report the attempted backend, availability and warnings\n"
+     "  services       Also list discovered _remotepairing._tcp.local. endpoints\n"
+     "  --timeout MS   Maximum discovery wait (default: 3000; range: 1..60000)\n\n"
+     "Uses the Server subscription cache when available, or a bounded query.\n"
+     "Availability means discovery can run, not that an iPhone must be found.\n"
+     "An empty service list is success when the backend is available. No pairing\n"
+     "records are read, no authentication is attempted and no media is started.\n\n"
+     "Examples:\n  xdb mdns check\n  xdb mdns services\n"},
     {"devices", "xdb devices [-l] [-d|-e] [--timeout MS] [--json]",
      "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
@@ -154,6 +164,7 @@ void print_help(std::span<const std::string> command) {
                      "Commands:\n"
                      "  help [COMMAND...]   Show command help\n"
                      "  devices [-l]        List discovered devices\n"
+                     "  mdns check/services Diagnose iOS service discovery\n"
                      "  get-state           Print the selected device state\n"
                      "  get-serialno        Print the selected device UDID\n"
                      "  wait-for-device     Wait for a connectable device\n"
@@ -188,6 +199,8 @@ void print_help(std::span<const std::string> command) {
     if (command[0] == "ddi" && command.size() > 1 && command[1] != "prepare" &&
         command[1] != "status" && command[1] != "remove")
         throw std::invalid_argument("Unknown ddi command; run xdb ddi --help");
+    if (command[0] == "mdns" && command.size() > 1 && command[1] != "check" && command[1] != "services")
+        throw std::invalid_argument("Unknown mdns command; run xdb mdns --help");
     for (const auto &entry : commands) {
         if (command[0] != entry.name) continue;
         std::cout << "Usage: " << entry.usage << "\n\n" << entry.details

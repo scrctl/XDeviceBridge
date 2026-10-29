@@ -616,10 +616,24 @@ BrowseResult browse(const BrowseOptions &options) {
         result.warnings.push_back("mDNS timeout must be between 0 and 60000 ms");
         return result;
     }
+#ifdef __ANDROID__
+    constexpr auto native_backend = "android-nsd";
+#elif defined(__APPLE__)
+    constexpr auto native_backend = "bonjour";
+#elif defined(XDB_HAVE_AVAHI)
+    constexpr auto native_backend = "avahi";
+#elif defined(_WIN32)
+    constexpr auto native_backend = "windows-dnssd";
+#else
+    constexpr auto native_backend = "direct";
+#endif
     auto scan_timeout = options.timeout;
     const auto subscription_start = detail::RecordCache::Clock::now();
     if (auto cached = detail::subscribed_browse(options)) {
-        if (cached->available || cached->cancelled) return *cached;
+        cached->backend = native_backend;
+        if (cached->available || cached->cancelled) {
+            return *cached;
+        }
         scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - subscription_start);
         if (scan_timeout.count() <= 0) return *cached;
         result.warnings = std::move(cached->warnings);
@@ -635,11 +649,13 @@ BrowseResult browse(const BrowseOptions &options) {
 #else
     auto native = detail::windows_browse(options);
 #endif
+    native.backend = native_backend;
     if (native.available || native.cancelled) return native;
     scan_timeout -= std::chrono::duration_cast<std::chrono::milliseconds>(detail::RecordCache::Clock::now() - native_start);
     if (scan_timeout.count() <= 0) return native;
     result.warnings = std::move(native.warnings);
 #endif
+    result.backend = "direct";
     try {
         std::string error;
         if (!transport::initialize_sockets(error)) { result.warnings.push_back(std::move(error)); return result; }

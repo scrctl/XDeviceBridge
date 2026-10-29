@@ -39,7 +39,7 @@
 
 | 状态 | 可调用的方法 |
 | --- | --- |
-| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、pair、connect、disconnect、ddi.download、ddi.prepare、ddi.status、ddi.remove、connection.open、connection.attach、connection.close |
+| SDK 已连接／hello 已完成，无设备会话 | server.info、server.stop、devices、mdns.check、mdns.services、pair、connect、disconnect、ddi.download、ddi.prepare、ddi.status、ddi.remove、connection.open、connection.attach、connection.close |
 | 已拥有或附着设备会话 | 上述方法及 device/display/input/app/clipboard/media 方法；同一连接再次 open/attach 会失败 |
 | 已通过 connection.close 脱离 | 可再次调用管理方法；open/attach 可建立新的关联 |
 | 已中断、传输失败或已销毁 | 丢弃客户端，使用新句柄重新连接 |
@@ -113,6 +113,8 @@ SDK 调用方须先检查此能力；1.2.0 及更早的 Server 会忽略未知�
 CLI 截图会探测此能力，旧服务端保留原有行为。
 `capabilities.shared_control_sessions:true` 另行表示支持下述显式 shared 控制组；公共 C ABI 与通信协议仍为 1。
 
+`capabilities.mdns_diagnostics:true` 表示支持 `mdns.check` 和 `mdns.services`；缺失时不支持。
+
 ### `server.stop`
 
 不需要参数或设备会话。先发送结果 `{}`，再请求关闭服务。
@@ -179,6 +181,18 @@ pair-verify、TLS 隧道和 RSD 建连；仅找到本地记录不代表连接成
 返回 `{disconnected:[{udid:string,address:string,port:integer}]}`；没有匹配连接时返回空数组，
 也视为成功。使用这些连接的活跃会话失效，之后设备调用返回 `not_connected`，旧 attachment
 也无法复用。保留配对记录、DDI 和其他会话。重新配对或管理 DDI 前须先关闭／断开手动连接。
+
+### `mdns.check` / `mdns.services`
+
+无需设备会话，通过 `server.info.capabilities.mdns_diagnostics` 探测支持。
+可选 `timeout_ms` 为整数 1..60000，默认 3000；使用 Server 的持续订阅缓存，不可用时进行有界查询。
+仅查询 `_remotepairing._tcp.local.`，不读取配对凭据、不认证设备、不启动媒体。
+两者返回 `{backend:string,available:bool,cancelled:bool,warnings:string[],service_type:string}`。
+`backend` 为实际尝试的 `bonjour`、`avahi`、`windows-dnssd`、`android-nsd` 或 `direct`。
+`available` 仅表示后端可以查询；服务列表为空并不表示后端不可用。
+`mdns.services` 另返回 `services` 数组，每项为
+`{instance:string,name:string,target:string,endpoints:[{address:string,port:uint16,interface:string,interface_index:uint}]}`。
+不返回原始 TXT、配对匹配结果或认证结论。取消可能保留已收到的服务快照。
 
 ### `pair`
 

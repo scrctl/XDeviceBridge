@@ -93,6 +93,7 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `server.info` | 无 | 协议号、服务端版本和进程 ID |
 | `server.stop` | 无 | 回复后请求关闭；取消全部会话 |
 | `devices` | `transport`：auto/usb/wifi；`timeout_ms`：0..60000 | 设备、候选项、警告 |
+| `mdns.check` / `mdns.services` | 可选 `timeout_ms`: 1..60000 | 发现后端、可用性、警告；services 另列出原始服务端点 |
 | `connect` | `address`，可选 `port`、`udid`、`timeout_ms` | Server 持有的已认证 Wi-Fi 基础连接；不需要发现 |
 | `disconnect` | 可选 `address`、`port`、`udid` | 关闭匹配的手动连接并使附着会话失效；保留凭据和 DDI |
 | `pair` | `transport`：wifi/usb；可选 `udid`；`timeout_ms`：1..300000 | UDID 和复用状态；进度／PIN 事件 |

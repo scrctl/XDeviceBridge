@@ -47,6 +47,7 @@ struct BrowseResult {
     bool cancelled = false;
     bool available = false;  ///< 原生后端已接受查询或至少一个接口成功发包；空列表不代表扫描失败
     std::vector<std::string> warnings;
+    std::string backend;  ///< Actually attempted backend; availability is reported separately.
 };
 
 /// macOS 优先通过系统 Bonjour，Linux 编入 Avahi 后优先通过其系统服务，

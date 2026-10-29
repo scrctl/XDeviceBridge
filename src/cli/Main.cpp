@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
             xdb::cli::print_version();
             return 0;
         }
-        if (show_help || (args.size() == 1 && args[0] == "ddi")) {
+        if (show_help || (args.size() == 1 && (args[0] == "ddi" || args[0] == "mdns"))) {
             xdb::cli::print_help(args);
             return 0;
         }
@@ -265,7 +265,7 @@ int main(int argc, char **argv) {
         }
         if (args[0] != "devices" && args[0] != "pair" && args[0] != "ddi" && args[0] != "screenshot" &&
             args[0] != "rpc" && args[0] != "rpc-shell" && args[0] != "connect" && args[0] != "disconnect" &&
-            args[0] != "get-state" && args[0] != "get-serialno" && args[0] != "wait-for-device")
+            args[0] != "get-state" && args[0] != "get-serialno" && args[0] != "wait-for-device" && args[0] != "mdns")
             throw std::invalid_argument("Unknown command; run xdb --help");
         const bool query_device = args[0] == "get-state" || args[0] == "get-serialno";
         if ((query_device || args[0] == "wait-for-device") && args.size() != 1)
@@ -287,6 +287,10 @@ int main(int argc, char **argv) {
             if (args[1] != "prepare" && (replace || !cache.empty()))
                 throw std::invalid_argument("--replace and --cache-dir apply only to ddi prepare");
         }
+        if (args[0] == "mdns" && (args.size() != 2 || (args[1] != "check" && args[1] != "services")))
+            throw std::invalid_argument("Expected mdns check/services; run xdb mdns --help");
+        if (args[0] == "mdns" && (timeout == 0 || timeout > 60000))
+            throw std::invalid_argument("mDNS diagnostic timeout must be 1..60000 ms");
         if (!dir.empty() && !xdb_client_start_server(port, dir.c_str())) {
             std::cerr << xdb_last_error() << '\n';
             return 1;
@@ -362,6 +366,36 @@ int main(int argc, char **argv) {
             }
             return value;
         };
+        if (args[0] == "mdns") {
+            const auto info = request("server.info", Json::object(), false);
+            if (!info.value("ok", false) || !info.value("result", Json::object())
+                    .value("capabilities", Json::object()).value("mdns_diagnostics", false))
+                throw std::runtime_error("This server does not support mDNS diagnostics; upgrade xdb Server");
+            Json params = Json::object();
+            if (timeout >= 0) params["timeout_ms"] = timeout;
+            const auto reply = request("mdns." + args[1], params, json_output);
+            if (!reply.value("ok", false)) return 1;
+            const auto &result = reply["result"];
+            if (!json_output) {
+                std::cout << "mDNS backend: " << result.at("backend").get<std::string>()
+                          << (result.at("available").get<bool>() ? " (available)\n" : " (unavailable)\n");
+                if (args[1] == "services") {
+                    std::cout << "List of " << result.at("service_type").get<std::string>() << " services\n";
+                    for (const auto &service : result.at("services")) {
+                        std::cout << service.at("instance").get<std::string>() << '\n';
+                        for (const auto &ep : service.at("endpoints")) {
+                            xdb::ipc::Endpoint endpoint{ep.at("address").get<std::string>(), ep.at("port").get<uint16_t>()};
+                            std::cout << "  " << endpoint.label() << "  interface:"
+                                      << ep.at("interface").get<std::string>() << '\n';
+                        }
+                    }
+                }
+                for (const auto &warning : result.at("warnings"))
+                    std::cerr << "warning: " << warning.get<std::string>() << '\n';
+            }
+            if (result.value("cancelled", false)) return 130;
+            return result.at("available").get<bool>() ? 0 : 1;
+        }
         if (args[0] == "wait-for-device") {
             // Only this command owns signal handling and interrupts its own RPC socket.
             std::signal(SIGINT, stop);

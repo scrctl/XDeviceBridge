@@ -93,6 +93,19 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert info['capabilities']['manual_connections'] is True
             assert info['capabilities']['read_only_sessions'] is True
             assert info['capabilities']['shared_control_sessions'] is True
+            assert info['capabilities']['mdns_diagnostics'] is True
+            # Diagnostic validity must not depend on LAN devices or installed native daemons.
+            for method in ('mdns.check', 'mdns.services'):
+                result = request(c, method, {'timeout_ms': 1})
+                assert result['ok'], result
+                value = result['result']
+                assert isinstance(value['available'], bool) and isinstance(value['warnings'], list)
+                assert value['backend'] in ('bonjour', 'avahi', 'windows-dnssd', 'android-nsd', 'direct')
+                assert value['service_type'] == '_remotepairing._tcp.local.'
+                if method == 'mdns.services':
+                    assert isinstance(value['services'], list)
+                assert request(c, method, {'timeout_ms': 0})['error']['code'] == 'invalid_params'
+
             assert client.xdb_client_server_version(c).decode() == info['version']
             unknown = request(c,'future.optional.method')
             assert not unknown['ok'] and unknown['error']['code']=='not_connected'

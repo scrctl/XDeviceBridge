@@ -7,7 +7,7 @@
 
 namespace xdb::server::detail {
 inline bool read_only_method(std::string_view method) {
-    return method == "server.info" || method == "devices" || method == "connection.close" ||
+    return method == "mdns.check" || method == "mdns.services" || method == "server.info" || method == "devices" || method == "connection.close" ||
            method == "connection.open" || method == "connection.attach" || method == "device.info" ||
            method == "display.info" || method == "screenshot" || method == "app.list" ||
            method == "clipboard.get" || method == "video.frame" || method == "media.status";

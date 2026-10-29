@@ -22,6 +22,7 @@
 #include "util/Hex.h"
 #include "wifi/Crypto.h"
 #include "wifi/HostMetadata.h"
+#include "wifi/Mdns.h"
 #include "wifi/PairRecord.h"
 #include <algorithm>
 #include <cmath>
@@ -318,7 +319,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     if (read_only_ && !detail::read_only_method(method))
         return Reply::failure("read_only_session", "This session only permits screenshots and read-only queries");
     if (method == "devices" || method == "pair" || method == "ddi.download" || method == "ddi.prepare" ||
-        method == "ddi.status" || method == "ddi.remove")
+        method == "ddi.status" || method == "ddi.remove" || method == "mdns.check" || method == "mdns.services")
         return handle_management(method, p, event, cancel);
     if (method == "connect" || method == "disconnect")
         return handle_persistent_connection(method, p, cancel);
@@ -657,6 +658,29 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
 Reply Backend::handle_management(const std::string &method, const Json &p, const Event &event, const Cancel &cancel) {
     auto fail = [](const std::string &error) { return Reply::failure("operation_failed", error); };
     std::string error;
+    if (method == "mdns.check" || method == "mdns.services") {
+        wifi::mdns::BrowseOptions options;
+        options.timeout = std::chrono::milliseconds(bounded(p, "timeout_ms", 3000, 1, 60000));
+        options.should_cancel = cancel;
+        const auto found = wifi::mdns::browse(options);
+        Reply r;
+        r.result = {{"backend", found.backend}, {"available", found.available},
+                    {"cancelled", found.cancelled}, {"warnings", found.warnings},
+                    {"service_type", "_remotepairing._tcp.local."}};
+        if (method == "mdns.services") {
+            auto services = Json::array();
+            for (const auto &ad : found.advertisements) {
+                auto endpoints = Json::array();
+                for (const auto &ep : ad.endpoints)
+                    endpoints.push_back({{"address", ep.address}, {"port", ep.port},
+                                         {"interface", ep.interface_name}, {"interface_index", ep.interface_index}});
+                services.push_back({{"instance", ad.instance}, {"name", ad.name},
+                                    {"target", ad.target}, {"endpoints", std::move(endpoints)}});
+            }
+            r.result["services"] = std::move(services);
+        }
+        return r;
+    }
     if (method == "devices") {
         remote::DiscoveryOptions o;
         o.pairing_directory = directory_;
