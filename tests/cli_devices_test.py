@@ -79,12 +79,16 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         return result
 
     before_help = server.methods()
+    version = run('--version').stdout
+    assert version.startswith('XDeviceBridge ') and 'Running on ' in version
+    assert f'Installed as {exe}\n' in version
+    assert run('version').stdout == version
     summary = run('--help').stdout
     assert 'Commands:' in summary and 'Options:' in summary
     assert 'record_present' not in summary and 'JSON debugging console, not an iOS' not in summary
     for command in (('-h',), ('devices',), ('pair',), ('ddi',), ('ddi', 'prepare'), ('ddi', 'status'), ('ddi', 'remove'),
                     ('screenshot',), ('connect',), ('disconnect',), ('start-server',), ('kill-server',), ('server',),
-                    ('rpc',), ('rpc-shell',)):
+                    ('rpc',), ('rpc-shell',), ('version',)):
         args = command if command == ('-h',) else (*command, '--help')
         assert 'Usage:' in run(*args).stdout
     assert 'connectivity' in run('devices', '--help').stdout
@@ -105,6 +109,10 @@ with FakeServer() as server, tempfile.TemporaryDirectory(prefix='xdb-cli-') as t
         result = subprocess.run([exe, *args], env=help_env, text=True, capture_output=True,
                                 encoding='utf-8', timeout=5)
         assert result.returncode == 0 and 'Usage:' in result.stdout, result.stderr
+    for args in (('--version',), ('version',)):
+        result = subprocess.run([exe, *args], env=help_env, text=True, capture_output=True,
+                                encoding='utf-8', timeout=5)
+        assert result.returncode == 0 and result.stdout == version and not result.stderr, result.stderr
     assert server.methods() == before_help
     for args in (('connect',), ('connect', '10.0.0.7:0'), ('connect', '[::1'),
                  ('connect', '10.0.0.7:abc'), ('connect', '10.0.0.7:65536'),

@@ -102,13 +102,15 @@ int main(int argc, char **argv) {
         std::string dir, output, serial, wifi_address, cache;
         std::optional<std::string> display_brand;
         bool wifi = false, usb = false, replace = false, json_output = false, long_output = false;
-        bool show_help = false, explicit_port = false;
+        bool show_help = false, show_version = false, explicit_port = false;
         int timeout = -1;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i) {
             std::string a = argv[i];
             if (a == "--help" || a == "-h")
                 show_help = true;
+            else if (a == "--version")
+                show_version = true;
             else if (a == "--wifi") {
                 wifi = true;
                 wifi_address = "auto";
@@ -151,6 +153,10 @@ int main(int argc, char **argv) {
                 throw std::invalid_argument("Unknown option: " + a);
             else
                 args.push_back(a);
+        }
+        if (show_version || (!show_help && args.size() == 1 && args[0] == "version")) {
+            xdb::cli::print_version();
+            return 0;
         }
         if (show_help || (args.size() == 1 && args[0] == "ddi")) {
             xdb::cli::print_help(args);

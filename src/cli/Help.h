@@ -6,4 +6,5 @@
 
 namespace xdb::cli {
 void print_help(std::span<const std::string> command);
+void print_version();
 }

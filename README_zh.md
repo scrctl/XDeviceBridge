@@ -118,6 +118,9 @@ C ABI 定义位于 [xdb.h](include/xdb/xdb.h)，通信协议见[通信协议说�
 运行 `xdb` 或 `xdb --help` 查看命令速查。各子命令提供参数说明和示例，
 例如 `xdb pair --help`、`xdb ddi prepare --help`。查看帮助不会启动或连接 Server。
 
+使用 `xdb --version` 或 `xdb version` 查看本地程序版本、安装路径和运行平台。
+运行中的 Server 版本可用 `xdb rpc server.info` 查询。
+
 桌面端 CLI 和 SDK 会在需要时自动启动后台 Server。客户端退出后，Server 继续运行，
 供其他客户端复用。它只监听本机回环地址，默认端口为 `17423`；本机客户端不需要访问令牌。
 服务不按本机进程或操作系统用户鉴权。能够连接该端口的本机进程可控制设备、访问剪贴板

@@ -122,6 +122,9 @@ Run `xdb` or `xdb --help` for a command overview. Each command has detailed help
 and examples, such as `xdb pair --help` and `xdb ddi prepare --help`.
 Help does not start or connect to a server.
 
+Use `xdb --version` or `xdb version` to show the local executable version,
+installation path and running platform. Use `xdb rpc server.info` for the running Server version.
+
 Desktop CLI and SDK clients automatically start a background server when needed.
 The server remains running after the client exits and is reused by other clients.
 It listens only on loopback (default port 17423); local clients need no access token.

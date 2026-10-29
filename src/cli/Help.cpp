@@ -15,6 +15,10 @@ struct CommandHelp {
 };
 
 constexpr CommandHelp commands[] = {
+    {"version", "xdb version",
+     "Show the local executable version, installation path and running platform.\n"
+     "This does not start or connect to a server. Use xdb rpc server.info\n"
+     "to query the running server version.\n"},
     {"devices", "xdb devices [-l] [--usb|--wifi] [--timeout MS] [--json]",
      "List discovered and manually connected devices without opening new sessions.\n\n"
      "  -l             Show names, addresses, interfaces and pairing details\n"
@@ -131,6 +135,7 @@ void print_help(std::span<const std::string> command) {
                      "  start-server        Start the background server\n"
                      "  kill-server         Stop the server\n"
                      "  server              Run the server in the foreground\n"
+                     "  version             Show the local executable version\n"
                      "  rpc                 Send a JSON RPC request\n"
                      "  rpc-shell           Open the JSON debugging console\n\n"
                      "Options:\n"
@@ -138,7 +143,8 @@ void print_help(std::span<const std::string> command) {
                      "  --port PORT         Server port (default: 17423; env: XDB_PORT)\n"
                      "  --data-dir DIR      Pairing data directory for a new server\n"
                      "  --json              Print JSON responses\n"
-                     "  -h, --help          Show help for the selected command\n\n"
+                     "  -h, --help          Show help for the selected command\n"
+                     "  --version           Show the local executable version\n\n"
                      "The server starts automatically when needed.\n"
                      "A sole discovered device is selected when -s is omitted.\n"
                      "Run 'xdb <command> --help' for command options and examples.\n";
