@@ -778,3 +778,39 @@ first group preserved the remaining group's stream and original ceiling. A fresh
 producer requested 60,000,000 unchanged while the device negotiated 6,000,000.
 The isolated Server was stopped; the system Server's existing manual connection
 remained available. No full-range uint64 device acceptance was tested.
+
+## Device-side video frame-rate negotiation investigation
+
+On macOS, AVConference's `VCMediaNegotiationBlobVideoRuleCollection` serializer
+confirmed f3=`formats` and f4=`preferredFormat`. Runtime disassembly of
+`VCMediaNegotiationBlobVideoSettings::newVideoRuleCollectionsForScreen:isCellular16x9Capable:isLocalConfig:`
+showed paired 30/60 FPS format bits. In the current offer, 50115 (`0xc3c3`)
+contains both; 16705 (`0x4141`) retains the same resolution families at 30 FPS,
+and 33410 (`0x8282`) retains them at 60 FPS. This identifies negotiation fields,
+not a device-side arbitrary-FPS setter.
+
+On iPhone14,4/iOS 27.0.1 over Wi-Fi, Safari displayed the animated color-tile
+fixture. Each successful run warmed up for two seconds, measured eight seconds
+of RTP, and sent RR once a second. All bitrate fields stayed at their defaults.
+
+| Formats | Preferred format | Device Framerate | Received RTP markers/s |
+| --- | --- | --- | --- |
+| Default 0xc3c3 | 0 | 60 | 59.98 |
+| 60 FPS only 0x8282 | 0 | 60 | 60.06 |
+| All legacy 30 FPS formats 0x15555 | 0 | Rejected: 32035 / GKVoiceChatServiceErrorDomain detail 5 | none |
+| Default 0xc3c3 | 30 FPS bits 0x4141 | 60 | 60.08 |
+| Restored default 0xc3c3 | 0 | 60 | 59.89 |
+| Default 0xc3c3 | Single 1280x720/30 FPS bit 0x4000 | 60 | 59.45 |
+
+An earlier same-resolution-family 30-only request (0x4141) was also rejected;
+that preliminary run preceded confirmation that the fixture was open, so its
+baseline traffic is not used as the animated-scene comparison. Successful runs
+retained answer dimensions 1136x2448 and TXMaxBitrate 6,000,000. Unique RTP
+timestamps agreed with approximately 60 pictures/s; neither metric measures
+rendered FPS or proves the hardware encoder's internal cadence.
+
+These candidates did not produce a usable sender frame-rate limit on this phone.
+They do not prove that every DDI version/device rejects lower frame rates or that
+no other control exists. No sender-FPS API or production offer change was added.
+Every successful stream stopped cleanly; pairing, DDI and the system Server's
+manual connection were retained.

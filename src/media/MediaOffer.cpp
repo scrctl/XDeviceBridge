@@ -49,9 +49,10 @@ std::vector<uint8_t> field_varint(uint32_t field, uint64_t v) {
 
 // 各层字段号和默认值来自已成功建立的媒体会话样本；未确认的含义在对应字段处说明。
 
-/// 分辨率条目的 f1..f4 为 {1, pair_index, 50115, 0}，pair_index 与 50115 的含义未确认。
-/// 已测设备将 pair_index 从 0 改到 6 时，编码尺寸仍为 1136x2464；该结果不足以将它
-/// 解释为分辨率档位。对照范围见 docs/coredevice.md §11，不能直接用于其他设备。
+/// VideoRuleCollection 的 f1..f4 为 {operation, transport, formats, preferredFormat}。
+/// AVConference 序列化及方法对照确认 50115 同时含 30/60 FPS 的格式位，并非单一分辨率。
+/// 历史参数名 pair_index 实际位于 transport；不能将它解释为分辨率档位。
+/// 已测 iPhone 拒绝仅 30 FPS 的组合，优先提示仍协商为 60 FPS，见 docs/VALIDATION.md。
 std::vector<uint8_t> res_entry(uint64_t pair_index) {
     return msg({field_varint(1, 1), field_varint(2, pair_index), field_varint(3, 50115),
                 field_varint(4, 0)});
