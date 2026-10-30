@@ -27,6 +27,7 @@
 #include "wifi/PairRecord.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <shared_mutex>
@@ -494,7 +495,10 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         r.result = {{"error", terminal}, {"video_unusable", s.video && s.video->video_unusable()},
                     {"recording_error", recording_error},
                     {"video_max_fps", s.video ? s.video->max_fps() : 0},
-                    {"video_rate_limited", s.video ? s.video->stats().rate_limited : uint64_t(0)}};
+                    {"video_rate_limited", s.video ? s.video->stats().rate_limited : uint64_t(0)},
+                    {"video_max_bitrate", s.video ? s.video->max_bitrate() : 0}};
+        const auto negotiated = s.video ? s.video->negotiated_max_bitrate() : std::nullopt;
+        r.result["video_negotiated_max_bitrate"] = negotiated ? Json(*negotiated) : Json(nullptr);
         return r;
     }
     if (method == "recording.configure") {
@@ -580,6 +584,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
     }
     if (method == "video.start") {
         const unsigned max_fps = detail::video_max_fps(p);
+        const uint64_t max_bitrate = detail::video_max_bitrate(p);
         if (max_fps && !p.value("decode", true))
             return Reply::failure("invalid_params", "max_fps requires decoded video");
         Json profile;
@@ -601,6 +606,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
             options.use_hardware = p.value("hardware_decode", false);
             options.decode_video = p.value("decode", true);
             options.max_fps = max_fps;
+            options.offer.max_bitrate = max_bitrate;
             options.recorder = s.recorder.get();
             options.record_path = p.value("record_path", std::string());
             if (!options.record_path.empty() && !std::filesystem::u8path(options.record_path).is_absolute())
@@ -629,7 +635,18 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
             s.video.reset();
             return fail(error.empty() ? "No valid recording IDR within five seconds" : error);
         }
-        return {};
+        Reply r;
+        r.result["max_bitrate"] = s.video->max_bitrate();
+        const auto negotiated = s.video->negotiated_max_bitrate();
+        r.result["negotiated_max_bitrate"] = negotiated ? Json(*negotiated) : Json(nullptr);
+        if (p.contains("max_bitrate") && max_bitrate != s.video->max_bitrate()) {
+            const auto warning = "Ignoring max_bitrate=" + std::to_string(max_bitrate) +
+                "; reusing running stream max_bitrate=" + std::to_string(s.video->max_bitrate()) +
+                " (0 uses device defaults)";
+            r.result["warnings"] = Json::array({warning});
+            std::fprintf(stderr, "Warning: %s\n", warning.c_str());
+        }
+        return r;
     }
     if (method == "video.stop") {
         s.video.reset();

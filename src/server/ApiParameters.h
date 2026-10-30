@@ -1,5 +1,6 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -17,6 +18,14 @@ inline unsigned video_max_fps(const nlohmann::json &params) {
         if (fps >= 0 && fps <= 240) return static_cast<unsigned>(fps);
     }
     throw std::invalid_argument("max_fps must be an integer in 0..240 (0 is unlimited)");
+}
+inline uint64_t video_max_bitrate(const nlohmann::json &params) {
+    if (!params.contains("max_bitrate")) return 0;
+    const auto &value = params.at("max_bitrate");
+    if (value.is_number_unsigned()) return value.get<uint64_t>();
+    if (value.is_number_integer() && value.get<int64_t>() >= 0)
+        return static_cast<uint64_t>(value.get<int64_t>());
+    throw std::invalid_argument("max_bitrate must be a nonnegative integer in bit/s (0 uses device defaults)");
 }
 inline bool read_only_method(std::string_view method) {
     return method == "mdns.check" || method == "mdns.services" || method == "server.info" || method == "devices" || method == "connection.close" ||

@@ -178,6 +178,8 @@ public:
     /// 可由会话线程更新；worker 在下一 AU 读取，共享组使用最高需求。
     void set_max_fps(unsigned fps) { max_fps_ = fps; }
     [[nodiscard]] unsigned max_fps() const { return max_fps_.load(); }
+    [[nodiscard]] uint64_t max_bitrate() const { return options_.offer.max_bitrate; }
+    [[nodiscard]] std::optional<uint64_t> negotiated_max_bitrate() const;
     /// 复制录制消费者/裸文件的首错，或导致 worker 永久终止的错误。
     /// 可恢复的视频不可用标记不在此接口中；不会借用 worker 的字符串。
     [[nodiscard]] std::string capture_error() const;
@@ -267,9 +269,10 @@ private:
     bool stopping_ = false;
     int width_ = 0;
     int height_ = 0;
-    /// session_ 只由 worker 管理；外部读取这两个快照，避免重建时借用已销毁对象。
+    /// session_ 只由 worker 管理；外部读取这些快照，避免重建时借用已销毁对象。
     uint8_t payload_type_ = 0;
     uint16_t receiver_port_ = 0;
+    std::optional<uint64_t> negotiated_max_bitrate_;
     Stats stats_;
     /// 最近收到数据报的时刻，用于检测完全无包；不能仅依赖序号缺口。
     uint64_t last_packet_ms_ = 0;

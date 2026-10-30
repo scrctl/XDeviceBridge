@@ -235,9 +235,14 @@ void decoded_output_rate() {
     if (!xdb::kHaveDecoder) return;
     script.reset(); script.decoder_available = true; script.pixels = true;
     xdb::remote::Device device; Pump::Options options; options.max_fps = 1;
+    options.offer.max_bitrate = 1500000;
     std::string error; auto pump = Pump::start(device, options, error);
     check(pump != nullptr, "limited decoded pump starts");
     if (!pump) return;
+    check(pump->max_bitrate() == 1500000 && pump->negotiated_max_bitrate() == 1200000,
+          "requested bitrate and device-negotiated bitrate stay distinct");
+    { std::lock_guard lock(script.mutex);
+      check(script.starts.back().offer.max_bitrate == 1500000, "bitrate reaches stream negotiation"); }
     auto sequence = parameters(10);
     script.enqueue(rtp(sequence++, 0, idr, true));
     check(pump->wait_ready(2000) && pump->serial() == 1 && script.materialized == 1,
@@ -691,6 +696,7 @@ std::unique_ptr<StreamSession> StreamSession::start(remote::Device&, const Reque
         script.fail_next.reset(); error = "controlled video negotiation failure"; return nullptr;
     }
     Started started; started.sender_port = 24680; started.payload_type = 101;
+    if (!request.audio) started.max_bitrate = 1200000;
     started.local_ssrc = script.local; started.has_local_ssrc = script.local_present;
     started.remote_ssrc = 123; started.has_remote_ssrc = true;
     if (request.audio) {

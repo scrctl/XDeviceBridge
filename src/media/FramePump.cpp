@@ -254,6 +254,7 @@ bool FramePump::restart(std::string &err) {
         if (!options_.decode_video) width_ = height_ = 0;
         payload_type_ = 0;
         receiver_port_ = 0;
+        negotiated_max_bitrate_.reset();
     }
 
     if (session_ != nullptr) {
@@ -297,6 +298,7 @@ bool FramePump::restart(std::string &err) {
         std::lock_guard<std::mutex> lock(mutex_);
         payload_type_ = session_->started().payload_type;
         receiver_port_ = session_->receiver_port();
+        negotiated_max_bitrate_ = session_->started().max_bitrate;
     }
 
     // 首次启动时 worker 尚未运行，不计入重建次数，也不输出重建提示。
@@ -1212,6 +1214,11 @@ DisplayCrop display_crop(int coded_w, int coded_h) {
         return DisplayCrop {0, 0, 1125, 2436};
     }
     return DisplayCrop {0, 0, coded_w, coded_h};
+}
+
+std::optional<uint64_t> FramePump::negotiated_max_bitrate() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return negotiated_max_bitrate_;
 }
 
 }  // namespace xdb::media

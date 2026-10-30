@@ -95,6 +95,7 @@ with tempfile.TemporaryDirectory(prefix='xdb-ipc-') as tmp:
             assert info['capabilities']['shared_control_sessions'] is True
             assert info['capabilities']['mdns_diagnostics'] is True
             assert info['capabilities']['video_max_fps'] is True
+            assert info['capabilities']['video_max_bitrate'] is True
             # Diagnostic validity must not depend on LAN devices or installed native daemons.
             for method in ('mdns.check', 'mdns.services'):
                 result = request(c, method, {'timeout_ms': 1})

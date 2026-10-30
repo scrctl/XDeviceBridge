@@ -749,3 +749,32 @@ live rate changes and loss-recovery IDR publication. The Android API 24 Server
 cross-build also passed. Device encoding/transport and recording remain
 unlimited; VideoToolbox still requests BGRA internally but skips the CPU readback
 for suppressed output.
+
+## Device video bitrate request
+
+On iPhone14,4/iOS 27.0.1 over Wi-Fi, a macOS probe changed only the offer's
+6,000,000-bit/s entry while Safari displayed the same animated color-tile page.
+Each run warmed up for two seconds and measured eight seconds of video RTP payload:
+
+| Requested slot (bit/s) | Device TXMaxBitrate | Payload Mbps | RTP markers/s |
+| --- | --- | --- | --- |
+| Default 6,000,000 | 6,000,000 | 3.06 | 59.99 |
+| 1,500,000 | 1,500,000 | 1.34 | 60.59 |
+| 3,000,000 | 3,000,000 | 2.08 | 59.38 |
+| 60,000,000 | 6,000,000 | 3.14 | 59.87 |
+| Restored default | 6,000,000 | 3.20 | 59.96 |
+
+All five streams stopped successfully. Pairing and DDI were retained. This proves
+lower requests affected this device, while its higher request was clamped by the
+device. XDB does not impose a 6 Mbps ceiling. Payload Mbps excludes transport
+overhead; RTP markers/s is not decoded/rendered FPS. It does not establish behavior
+on other phones, exact instantaneous bitrate bounds, or unchanged image quality.
+
+The formal RPC was then exercised on an isolated local Server. The first shared
+group requested 1,500,000 and received frames with the same negotiated ceiling.
+A second group requested 3,000,000, received a warning, and reused 1,500,000;
+omitted/matching requests did not warn. Both received frames, and closing the
+first group preserved the remaining group's stream and original ceiling. A fresh
+producer requested 60,000,000 unchanged while the device negotiated 6,000,000.
+The isolated Server was stopped; the system Server's existing manual connection
+remained available. No full-range uint64 device acceptance was tested.

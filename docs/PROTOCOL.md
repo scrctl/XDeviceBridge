@@ -111,7 +111,7 @@ is a quick summary rather than the full method contract.
 | `connection.close` | none | Releases services, inputs and device lease |
 | `device.info` | none | Device UDID, OS version, model |
 | `screenshot` | optional `format`: png/bgra (default png) | PNG body or decoded BGRA pixels, with display geometry |
-| `video.start` | optional `hardware_decode`, `max_fps` | Starts background latest-frame capture |
+| `video.start` | optional `hardware_decode`, `max_fps`, `max_bitrate` | Starts background latest-frame capture |
 | `video.frame` | `since`: frame serial, `timeout_ms`: 0..1000 | Format BGRA, serial, width, height, row pitch, optional display geometry; raw pixels |
 | `video.stop` | none | Stops the video pump |
 | `input.tap` | `x`, `y`: 0..1; `hold_ms`: 0..2000 | Report delivery status |
@@ -245,6 +245,12 @@ only detaches the requesting client; it does not invalidate another attachment.
   shared groups use the highest request (unlimited wins), released on group exit.
   Startup/recovery frames bypass the cap. `media.status.video_max_fps` reports the
   effective cap and `video_rate_limited` counts skipped pixel publications.
+- `video.start.max_bitrate`: uint64 bit/s, 0/omitted keeps device defaults for a new
+  producer; advertised by `capabilities.video_max_bitrate`. Sent without a
+  device-specific clamp. The first producer's request wins; later differing
+  requests reuse it with `warnings` and a Server log. Omission reuses silently.
+  Start returns `max_bitrate` and `negotiated_max_bitrate` (device `TXMaxBitrate`
+  or null); status exposes `video_max_bitrate`/`video_negotiated_max_bitrate`.
 - `video.frame`: `allow_cached` permits reuse of a healthy latest frame after its
   wait expires. Geometry is captured with the published frame, not read later.
 - `screenshot`: `format: "bgra"` requests server-side PNG decoding; the default

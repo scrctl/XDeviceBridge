@@ -16,6 +16,16 @@ int main() {
         try { (void)video_max_fps({{"max_fps", value}}); } catch (const std::exception &) { rejected = true; }
         if (!rejected) throw std::runtime_error("invalid video output rate accepted");
     }
+    if (video_max_bitrate(json::object()) != 0 || video_max_bitrate({{"max_bitrate", 0}}) != 0 ||
+        video_max_bitrate({{"max_bitrate", 1500000}}) != 1500000 ||
+        video_max_bitrate({{"max_bitrate", UINT64_MAX}}) != UINT64_MAX)
+        throw std::runtime_error("video bitrate defaults/range changed");
+    for (const auto &value : {json(-1), json(1500000.0), json(true), json(nullptr),
+                             json("1500000")}) {
+        bool rejected = false;
+        try { (void)video_max_bitrate({{"max_bitrate", value}}); } catch (const std::exception &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("invalid video bitrate accepted");
+    }
     xdb::media::OutputRate gate;
     const auto now = std::chrono::steady_clock::time_point{};
     if (!gate.due(10, now)) throw std::runtime_error("first frame rate limited");

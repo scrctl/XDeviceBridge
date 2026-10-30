@@ -467,11 +467,13 @@ shared 模式只接受解码视频；相同参数复用生产者，冲突则拒�
 | --- | --- |
 | hardware_decode | 布尔值；默认 false；在支持的平台优先使用平台解码器 |
 | max_fps | 整数 0..240；默认 0（不限速）；BGRA 转换／发布的最高帧率 |
+| max_bitrate | uint64，单位 bit/s；默认 0（设备默认值）；请求设备的视频码率上限 |
 | decode | 布尔值；默认 true |
 | record_path | 字符串；默认空；非空时必须是原始 HEVC 输出绝对路径 |
 | restart_on_silence | 布尔值；默认 true；启用 3000 ms 静默重启阈值 |
 
-需要会话，返回 `{}`。启动最新帧生产者；解码模式启动不等待首帧，应通过 video.frame 等待数据。
+需要会话，返回 `{max_bitrate:uint,negotiated_max_bitrate:uint|null}`，可附带 `warnings:string[]`。
+启动最新帧生产者；解码模式启动不等待首帧，应通过 video.frame 等待数据。
 只接收编码流时，最多等待五秒以确认录制已就绪，失败会重置视频 pump。
 未编入解码器的构建对 decode=true 返回 `unsupported`。
 运行中重复调用可更新 `max_fps`，无需重启 pump；省略此参数会将该组需求恢复为不限速。
@@ -485,6 +487,15 @@ shared 模式只接受解码视频；相同参数复用生产者，冲突则拒�
 只有调用过 `video.start` 的组参与，附着套接字共用该组需求，最后一个套接字关闭时移除。
 因此其他组要求更高帧率时，低帧率组也可能取得更快的更新；这是生产者限速，不是逐客户端流量配额。
 这是最高上限，不保证达到指定帧率；`decode:false` 拒绝非零上限。
+
+`max_bitrate` 按 uint64 原样编码，不按机型另行截断；不代表设备接受完整的 uint64 范围。
+0 保留默认协商表，不表示无限码率。
+设备可能协商为不同的值：返回的 `max_bitrate` 是生产者的请求值，
+`negotiated_max_bitrate` 是设备的 `TXMaxBitrate`（尚未取得时为 null）。
+第一条视频生产者的设置保持不变，恢复视频时也沿用；后来显式请求不同值时继续复用，
+返回 `warnings` 并写入 Server 日志，省略则静默沿用。更改须先停止生产者
+（共享组须全部退出）。适用于解码和纯编码视频，不影响音频。
+可通过 `capabilities.video_max_bitrate` 检查支持。设备答复不构成所有机型的码率或单包大小保证。
 
 ### `video.frame`
 
@@ -574,6 +585,9 @@ XDB 不会自动继续播放或调整设备音量。调用方须实际消费并�
 
 `video_max_fps` 返回生产者的实际帧率上限（0 表示不限速或没有视频 pump）。
 `video_rate_limited` 单独统计已解码但因限速未转换／发布 BGRA 的图像次数，不计作解码失败。
+`video_max_bitrate` 是生产者请求的设备码率上限（0 表示设备默认值或没有 pump）；
+`video_negotiated_max_bitrate` 是设备返回的正整数 `TXMaxBitrate`，不可用时为 null。
+这两个字段都不是实时流量测量值。
 
 需要会话，无参数。返回 `{error:string,recording_error:string,video_unusable:bool}`。
 空字符串表示当前未报告终结性失败，不证明最近仍有活动。

@@ -140,6 +140,12 @@ std::optional<StreamSession::Started> parse_start_answer(
         // 保留既有低七位归一化（兼容带 marker 的整字节值），但不接受超出字节范围
         // 的值。RTP/RTCP 共用端口时，PT 64..95 与 RTCP 类型冲突（RFC 5761 §4）。
         if (const auto *sc = connection->find("streamConfig"); sc != nullptr) {
+            if (const auto *rate = sc->find("TXMaxBitrate")) {
+                if (rate->type == xpc::Type::UInt64 && rate->uint64 > 0)
+                    started.max_bitrate = rate->uint64;
+                else if (rate->type == xpc::Type::Int64 && rate->int64 > 0)
+                    started.max_bitrate = static_cast<uint64_t>(rate->int64);
+            }
             if (const auto *pt = sc->find("RxPayloadType")) {
                 uint32_t value = 0;
                 if (!parse_ssrc(*pt, value) || value > 255 ||

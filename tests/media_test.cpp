@@ -229,6 +229,21 @@ void check_start_answer() {
               std::string("保留完整回复、请求 UUID 和调用方输入：") + port.description);
     }
 
+    for (const auto &rate : {make_uint64(UINT64_MAX), make_int64(1500000),
+                             make_int64(-1), make_bool(true)}) {
+        auto answer = answer_with_port(make_uint64(80));
+        auto connection = answer.at("connection");
+        auto config = connection.at("streamConfig");
+        dict_set(config, "TXMaxBitrate", rate);
+        dict_set(connection, "streamConfig", std::move(config));
+        dict_set(answer, "connection", std::move(connection));
+        std::string err;
+        const auto parsed = parse_start_answer(std::move(answer), uuid, err);
+        const std::optional<uint64_t> expected = rate.type == Type::UInt64 ? rate.uint64 :
+            rate.type == Type::Int64 && rate.int64 > 0 ? std::optional<uint64_t>(rate.int64) : std::nullopt;
+        check(parsed && parsed->max_bitrate == expected, "negotiated bitrate preserves positive integers only");
+    }
+
     const auto reject = [&](Value port, const std::string &description) {
         std::string err = "previous error";
         StartStatus status = StartStatus::Started;
@@ -556,6 +571,30 @@ int main() {
     check(avc_features != nullptr && as_text(avc_features->bytes).find("VRAE") == std::string::npos,
           "能力串里不能出现 VRAE:0（带上它编码器改丢帧控码率，实测掉到 ~42fps）");
 
+    for (const uint64_t cap : {uint64_t(1500000), uint64_t(60000000), UINT64_MAX}) {
+        Offer capped = offer;
+        capped.max_bitrate = cap;
+        const auto wire = build_negotiator_offer(capped);
+        const auto parsed_cap = xdb::plist::parse(std::string(wire.begin(), wire.end()));
+        std::vector<uint8_t> bytes;
+        std::vector<Field> fields;
+        check(parsed_cap && zlib_unstore(parsed_cap->find("avcMediaStreamNegotiatorMediaBlob")->data, bytes, err) &&
+              parse_fields(bytes, fields), "capped offer remains parseable");
+        unsigned changed = 0, rates = 0;
+        for (size_t i = 0; i < fields.size() && fields.size() == top.size(); ++i) {
+            if (fields[i].bytes != top[i].bytes) {
+                ++changed;
+                std::vector<Field> record;
+                check(fields[i].number == 9 && parse_fields(fields[i].bytes, record) &&
+                      only(record, 2) && only(record, 2)->value == cap,
+                      "only the video bitrate slot changes");
+            }
+            if (fields[i].number == 9) ++rates;
+        }
+        check(fields.size() == top.size() && changed == 1 && rates == 10,
+              "bitrate cap preserves all other offer fields");
+    }
+
     std::printf("\n== 主机身份与能力串可注入 ==\n");
     Offer other = offer;
     other.host_model = "Mac9,1";
@@ -600,6 +639,9 @@ int main() {
     Offer audio_offer = offer;
     audio_offer.is_audio = true;
     const auto audio_blob = build_negotiator_offer(audio_offer);
+    auto capped_audio = audio_offer;
+    capped_audio.max_bitrate = 1500000;
+    check(build_negotiator_offer(capped_audio) == audio_blob, "video cap does not change audio negotiation");
     const auto audio_plist = xdb::plist::parse(std::string(audio_blob.begin(), audio_blob.end()));
     check(audio_plist.has_value(), "音频 offer 可解析为 XML plist");
     if (audio_plist) {

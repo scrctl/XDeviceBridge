@@ -532,11 +532,13 @@ conflicts are rejected without restarting another window's video.
 | --- | --- |
 | hardware_decode | bool; default false; prefer platform decoder where supported |
 | max_fps | integer 0..240; default 0 (unlimited); maximum BGRA conversion/publication rate |
+| max_bitrate | uint64, bit/s; default 0 (device defaults); requested device video bitrate ceiling |
 | decode | bool; default true |
 | record_path | string; default empty; nonempty must be an absolute raw HEVC output path |
 | restart_on_silence | bool; default true; enables a 3000 ms silence restart threshold |
 
-Session required. Result `{}`. Starts a latest-frame producer; decoded start does
+Session required. Result `{max_bitrate:uint,negotiated_max_bitrate:uint|null}`,
+with optional `warnings:string[]`. Starts a latest-frame producer; decoded start does
 not wait for the first frame. Use video.frame to wait for data. Encoded-only start
 waits at most five seconds for checked recording readiness, resetting the video
 pump on failure. Builds without a decoder reject decode=true with `unsupported`.
@@ -557,6 +559,18 @@ socket closes. A low-rate group may therefore receive faster updates while a
 higher-rate group is present. This is a producer limit, not a per-client traffic
 quota. This is an upper bound, not a target/minimum frame rate. `decode:false`
 rejects a nonzero limit.
+
+`max_bitrate` is encoded as uint64 without a device-specific clamp; the device
+need not accept that entire numeric range. Zero preserves
+its default offer; it does not mean unlimited. The device may negotiate a different
+value: `max_bitrate` in the result is the producer's request, while
+`negotiated_max_bitrate` reports `TXMaxBitrate` (null until available).
+The first producer's setting persists, including across recovery. Later explicit
+requests with a different value reuse it and return `warnings`, also logged by
+the Server; omission reuses it silently. Stop the producer before changing it
+(shared groups must all leave). This applies to decoded and encoded video, not
+audio. Check `capabilities.video_max_bitrate` for support. No universal bitrate
+or per-packet size guarantee is implied by the device's answer.
 
 ### `video.frame`
 
@@ -658,6 +672,9 @@ startup budget, recording startup still fails.
 `video_max_fps` reports the effective producer limit (0 means unlimited, or no
 video pump). `video_rate_limited` counts decoded pictures omitted from BGRA
 publication by the limiter, separately from decode failures.
+`video_max_bitrate` is the producer's requested device ceiling (0 for device
+defaults/no pump); `video_negotiated_max_bitrate` is the device's positive
+`TXMaxBitrate`, or null when unavailable. These do not measure current traffic.
 
 Session required. No params. Result `{error:string,recording_error:string,
 video_unusable:bool}`. Empty strings mean no currently reported terminal failure,

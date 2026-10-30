@@ -107,7 +107,7 @@ std::vector<uint8_t> session_blob(const Offer &offer) {
 /// 参考实现曾将 f2、f3 分别或同时缩为 0.25；该次主屏 IDR 大小为
 /// 49652 / 49789 / 49852 字节，基线为 49652 字节，没有观察到明显缩小。
 /// 本项目的档位删除和替换对照见 MediaOffer.h 与 docs/coredevice.md §11：
-/// 已测修改未提高 TXMaxBitrate，部分删除操作降低码率或帧率，因此产品保留原表。
+/// 提高档位未突破设备上限；降低 6 Mbps 档位已验证生效，其他记录保持原样。
 /// 这些结果只限定于已测配置；超大 NAL 的处理由解码后端承担，不能依赖此表保证上限。
 std::vector<uint8_t> rate_table(const Offer &offer) {
     std::vector<uint8_t> out;
@@ -148,6 +148,11 @@ std::vector<uint8_t> rate_table(const Offer &offer) {
         }
         if (offer.rate_variant == 3 && f2_of(e) >= 1000 && f2_of(e) < 20000000) {
             continue;  // 对照变体 3：删除 1000 <= f2 < 20000000 的记录。
+        }
+        if (!offer.is_audio && offer.max_bitrate && f2_of(e) == 6000000) {
+            for (auto &[field, value] : e) {
+                if (field == 2) value = offer.max_bitrate;
+            }
         }
         entry(e);
     }

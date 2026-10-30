@@ -80,6 +80,8 @@ public:
         /// 缺失时保留默认 100；只接受整数 byte，低七位的 64..95 因与 RTCP 冲突被拒绝。
         /// 音频也使用协商值。拆包前需区分同端口收到的裸 RTCP。
         uint8_t payload_type = 100;
+        /// 设备回报的 TXMaxBitrate，单位 bit/s；缺失或无效时为空。
+        std::optional<uint64_t> max_bitrate;
         /// answer 的 streamConfig.LocalSSRC，名字采用设备视角。
         /// 已测值与设备发送的 RTP SSRC 一致；客户端 RTCP 报告块用它指明被报告的媒体源。
         uint32_t local_ssrc = 0;
