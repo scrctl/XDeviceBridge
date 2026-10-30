@@ -110,12 +110,9 @@ else()
 endif()
 
 # ---------------------------------------------------------------- 解码后端 ---
-# 当前 VideoToolbox 适配器使用 2 字节 NAL 长度前缀，单个 NAL 最大为 65535 字节；
-# 已有设备样本包含 70101 字节的 NAL。此前 4 字节配置失败的范围见解码器注释，
-# 不能据此推断所有系统和码流都有相同限制。
-# 找到 libavcodec 时编入软件 HEVC 解码，供 macOS 处理超限 NAL，并作为
-# Linux / Windows 的视频后端。缺少开发包时仍可构建：macOS 只保留平台后端，
-# 非 Apple 平台则没有可用的视频解码后端。
+# Apple uses VideoToolbox hardware decoding with four-byte NAL lengths.
+# Optional FFmpeg provides explicit software decoding and platform-error fallback;
+# other platforms currently use its software video backend.
 option(XDB_LIBAV "Use optional FFmpeg video decoding" ON)
 option(XDB_LIBAV_AUDIO "Use optional FFmpeg AAC-ELD decoding" ON)
 set(XDB_LIBAV_FOUND OFF)

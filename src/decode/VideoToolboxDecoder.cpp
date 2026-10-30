@@ -1,4 +1,5 @@
 #include "Decoder.h"
+#include "util/Bytes.h"
 
 #include <CoreMedia/CMBlockBuffer.h>
 #include <CoreMedia/CMFormatDescription.h>
@@ -8,15 +9,10 @@
 
 #include <cstdio>
 #include <cstring>
-#include <mutex>
+#include <limits>
 
 namespace xdb {
 namespace {
-
-void store_be16(uint8_t *p, uint16_t v) {
-    p[0] = uint8_t(v >> 8);
-    p[1] = uint8_t(v);
-}
 
 /// 一次提交对应一个输出槽，通过 source_frame_ref_con 传给输出回调。
 /// 回调可能晚于 DecodeFrame 返回，槽必须覆盖回调的生命周期。当前成功提交路径
@@ -24,24 +20,23 @@ void store_be16(uint8_t *p, uint16_t v) {
 /// 回调 retain 输出像素缓冲，decode 在复制到 Frame 后负责 release。
 struct OutputSlot {
     CVPixelBufferRef pb = nullptr;
+    OSStatus status = noErr;
 };
 
 void output_callback(void *ref_con, void *source_frame_ref_con, OSStatus status, VTDecodeInfoFlags,
                      CVImageBufferRef image_buffer, CMTime, CMTime) {
     (void)ref_con;
     auto *slot = static_cast<OutputSlot *>(source_frame_ref_con);
+    if (slot != nullptr) slot->status = status;
     if (slot == nullptr || status != noErr || image_buffer == nullptr) {
         return;
     }
     slot->pb = CVPixelBufferRetain(image_buffer);
 }
 
-/// 当前适配器使用 2 字节 NAL 长度前缀。已有 macOS 26 / Apple Silicon
-/// 样本中，创建参数和写入前缀长度的 2×2 组合测试只有 2 字节组合成功；
-/// 4 字节会话返回 kVTVideoDecoderBadDataErr(-12909)。这项观察不代表
-/// 其他系统版本或码流也有相同限制。当前后端因此最多接受 65535 字节 NAL。
-constexpr int kNalLengthSize = 2;
-constexpr size_t kMaxNalSize = 0xFFFF;
+// Four-byte prefixes support device NALs larger than 65535 bytes.
+constexpr int kNalLengthSize = 4;
+constexpr size_t kMaxNalSize = std::numeric_limits<uint32_t>::max();
 
 class VideoToolboxDecoder final : public Decoder {
 public:
@@ -58,6 +53,23 @@ public:
         if (st != noErr) {
             std::fprintf(stderr, "Failed to parse HEVC parameter sets: %d\n", static_cast<int>(st));
             return false;
+        }
+
+        // Match the software scaler's BT.601 default only when the source did not
+        // declare a matrix. Preserve any matrix already parsed from the SPS.
+        if (CMFormatDescriptionGetExtension(format_desc_, kCMFormatDescriptionExtension_YCbCrMatrix) == nullptr) {
+            const void *key = kCMFormatDescriptionExtension_YCbCrMatrix;
+            const void *value = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
+            CFDictionaryRef extensions = CFDictionaryCreate(nullptr, &key, &value, 1,
+                &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+            CMFormatDescriptionRef corrected = nullptr;
+            if (extensions == nullptr) { teardown(); return false; }
+            st = CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                nullptr, 3, sets, sizes, kNalLengthSize, extensions, &corrected);
+            CFRelease(extensions);
+            if (st != noErr) { teardown(); return false; }
+            CFRelease(format_desc_);
+            format_desc_ = corrected;
         }
 
         // 属性值使用 CFNumber 对象。字典通过 CF 类型回调保留该对象，创建字典后
@@ -80,7 +92,13 @@ public:
         }
 
         const VTDecompressionOutputCallbackRecord cb{output_callback, nullptr};
-        st = VTDecompressionSessionCreate(nullptr, format_desc_, nullptr, dest, &cb, &session_);
+        const void *spec_key = kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder;
+        const void *spec_value = kCFBooleanTrue;
+        CFDictionaryRef spec = CFDictionaryCreate(nullptr, &spec_key, &spec_value, 1,
+            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        if (spec == nullptr) { CFRelease(dest); teardown(); return false; }
+        st = VTDecompressionSessionCreate(nullptr, format_desc_, spec, dest, &cb, &session_);
+        CFRelease(spec);
         CFRelease(dest);
 
         if (st != noErr || session_ == nullptr) {
@@ -88,11 +106,12 @@ public:
             teardown();
             return false;
         }
+        update_hardware_status();
         return true;
     }
 
     bool decode(const std::vector<Nal> &au, Frame &out, bool output_pixels) override {
-        if (session_ == nullptr) {
+        if (session_ == nullptr || failed_) {
             return false;
         }
 
@@ -109,8 +128,8 @@ public:
             if (type >= 32) {
                 continue;  // 非 VCL：参数集 / SEI / 保留
             }
-            if (n.size() > kMaxNalSize) {
-                warn_oversized(n.size());
+            if (n.size() > kMaxNalSize || total > std::numeric_limits<size_t>::max() - kNalLengthSize ||
+                n.size() > std::numeric_limits<size_t>::max() - kNalLengthSize - total) {
                 return false;
             }
             slices.push_back(&n);
@@ -122,13 +141,11 @@ public:
 
         std::vector<uint8_t> buf;
         buf.reserve(total);
-        // 每个 VCL NAL 前写两字节大端长度，长度仅计 NAL 本身，不含前缀。
+        // 每个 VCL NAL 前写四字节大端长度，长度仅计 NAL 本身，不含前缀。
         // NAL 保留 emulation prevention 字节，不能先转成去转义的 RBSP；长度和
         // 样本内容均按 AnnexB.h 中原始 Nal 的语义提交。
         for (const Nal *n : slices) {
-            uint8_t len[2];
-            store_be16(len, static_cast<uint16_t>(n->size()));
-            buf.insert(buf.end(), len, len + kNalLengthSize);
+            util::append_be32(buf, static_cast<uint32_t>(n->size()));
             buf.insert(buf.end(), n->begin(), n->end());
         }
 
@@ -165,6 +182,7 @@ public:
         st = VTDecompressionSessionDecodeFrame(session_, sb, 0, &slot, nullptr);
         CFRelease(sb);
         if (st != noErr) {
+            failed_ = true;
             if (slot.pb != nullptr) {
                 CVPixelBufferRelease(slot.pb);
             }
@@ -172,23 +190,46 @@ public:
         }
         // 等待已提交帧的异步回调完成，之后才读取 slot 并结束其栈上生命周期。
         // 当前适配器每次提交后等待，不在多个 decode 调用之间建立异步流水。
-        VTDecompressionSessionWaitForAsynchronousFrames(session_);
-        if (slot.pb == nullptr) {
+        const OSStatus waited = VTDecompressionSessionWaitForAsynchronousFrames(session_);
+        if (waited != noErr || slot.status != noErr) {
+            failed_ = true;
+            if (slot.pb) CVPixelBufferRelease(slot.pb);
             return false;
         }
-        if (output_pixels) copy_out(slot.pb, out);
+        if (slot.pb == nullptr) return false;
+        if (!verified_output_) {
+            update_hardware_status();
+            verified_output_ = true;
+        }
+        const bool copied = !output_pixels || copy_out(slot.pb, out);
         CVPixelBufferRelease(slot.pb);
         slot.pb = nullptr;
-        return !output_pixels || static_cast<bool>(out);
+        if (!copied) failed_ = true;
+        return copied;
     }
 
     [[nodiscard]] const char *backend_name() const override { return "VideoToolbox"; }
 
-    /// 当前两字节 NAL 长度前缀的表示上限；调用方可据此选择软件后端。
+    [[nodiscard]] std::optional<bool> hardware_accelerated() const override { return hardware_; }
+    [[nodiscard]] bool failed() const override { return failed_; }
+
+    /// Four-byte sample length, excluding the prefix itself.
     [[nodiscard]] size_t max_nal_size() const override { return kMaxNalSize; }
 
 private:
+    void update_hardware_status() {
+        CFTypeRef value = nullptr;
+        if (VTSessionCopyProperty(session_, kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                                  nullptr, &value) == noErr && value && CFGetTypeID(value) == CFBooleanGetTypeID())
+            hardware_ = CFBooleanGetValue(static_cast<CFBooleanRef>(value));
+        if (value) CFRelease(value);
+    }
+
     void teardown() {
+        hardware_.reset();
+        failed_ = false;
+        verified_output_ = false;
+        pts_num_ = 0;
         if (session_ != nullptr) {
             VTDecompressionSessionInvalidate(session_);
             CFRelease(session_);
@@ -200,23 +241,11 @@ private:
         }
     }
 
-    /// 当前两字节前缀不能表示大于 65535 字节的 NAL。已有设备样本出现过
-    /// 超限关键帧，调用方需改用软件解码；不要依据某个小码流样本假定不会触发。
-    static void warn_oversized(size_t n) {
-        static std::once_flag warned;
-        std::call_once(warned, [n] {
-            std::fprintf(stderr,
-                             "NAL size %zu exceeds the 2-byte length prefix; frame dropped. This stream "
-                             "requires software decoding.\n",
-                         n);
-        });
-    }
-
     /// 锁定像素缓冲后按源行跨度读取，复制为紧凑 BGRA；Frame 拥有复制后的像素。
     /// 锁定失败或源数据无效时不更新 out，调用方不能将旧内容视为本次新输出。
-    static void copy_out(CVPixelBufferRef pb, Frame &out) {
+    static bool copy_out(CVPixelBufferRef pb, Frame &out) {
         if (CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
-            return;
+            return false;
         }
         const auto *src = static_cast<const uint8_t *>(CVPixelBufferGetBaseAddress(pb));
         const size_t width = CVPixelBufferGetWidth(pb);
@@ -224,7 +253,9 @@ private:
         const size_t src_pitch = CVPixelBufferGetBytesPerRow(pb);
         const size_t row_bytes = width * 4;
 
-        if (src != nullptr && rows > 0 && row_bytes > 0) {
+        const bool valid = src && rows > 0 && width > 0 && width <= UINT32_MAX / 4 &&
+            rows <= UINT32_MAX && src_pitch >= row_bytes && row_bytes <= std::numeric_limits<size_t>::max() / rows;
+        if (valid) {
             out.width = static_cast<uint32_t>(width);
             out.height = static_cast<uint32_t>(rows);
             out.row_pitch = static_cast<uint32_t>(row_bytes);
@@ -235,11 +266,15 @@ private:
             }
         }
         CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+        return valid;
     }
 
     CMFormatDescriptionRef format_desc_ = nullptr;
     VTDecompressionSessionRef session_ = nullptr;
     int64_t pts_num_ = 0;
+    std::optional<bool> hardware_;
+    bool failed_ = false;
+    bool verified_output_ = false;
 };
 
 }  // namespace

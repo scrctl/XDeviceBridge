@@ -74,9 +74,8 @@ void warn_no_software() {
     std::call_once(warned, [] {
         std::fprintf(stderr,
                      "Software decoder (libavcodec) is not included; continuing with the platform "
-                     "decoder. The current adapter uses 2-byte NAL lengths and cannot process larger "
-                     "NALs. Such access units are dropped and the session is recreated, which may "
-                     "interrupt video.\nInstall FFmpeg development packages and reconfigure the "
+                     "decoder. Platform failures cannot fall back without a software backend.\n"
+                     "Install FFmpeg development packages and reconfigure the "
                      "build.\n");
     });
 }
@@ -255,6 +254,8 @@ bool FramePump::restart(std::string &err) {
         payload_type_ = 0;
         receiver_port_ = 0;
         negotiated_max_bitrate_.reset();
+        stats_.decoder.clear();
+        stats_.hardware_decode.reset();
     }
 
     if (session_ != nullptr) {
@@ -318,6 +319,7 @@ struct FramePump::WorkerState {
     std::unique_ptr<Decoder> decoder;
     OutputRate output_rate;
     bool software_only = false;
+    bool platform_decoder = false;
     bool configured = false;
     std::optional<RecordingVideoConfig> encoded_config;
     std::optional<int64_t> encoded_high_timestamp;
@@ -479,10 +481,11 @@ bool FramePump::configure_decoder(const AnnexBParser::AccessUnit &unit, size_t b
         }
     }
     if (!state.configured) {
-        if (state.software_only && state.decoder->max_nal_size() != ~size_t { 0 }) {
+        if (state.software_only && state.platform_decoder) {
             auto soft = create_software_decoder();
             if (soft != nullptr) {
                 state.decoder = std::move(soft);
+                state.platform_decoder = false;
                 std::printf("Decoder switched to %s\n", state.decoder->backend_name());
             } else {
                 // 软件后端未编入时保留平台后端并提示构建条件。
@@ -504,9 +507,15 @@ bool FramePump::configure_decoder(const AnnexBParser::AccessUnit &unit, size_t b
                 default: break;
             }
         }
-        if (vps.empty() || sps.empty() || pps.empty() ||
-            !state.decoder->configure(vps, sps, pps)) {
-            return false;
+        if (vps.empty() || sps.empty() || pps.empty()) return false;
+        if (!state.decoder->configure(vps, sps, pps)) {
+            if (state.software_only) return false;
+            auto software = create_software_decoder();
+            if (!software || !software->configure(vps, sps, pps)) return false;
+            state.decoder = std::move(software);
+            state.platform_decoder = false;
+            state.software_only = true;
+            std::fprintf(stderr, "Platform video decoder unavailable; using software decoding\n");
         }
         state.configured = true;
     }
@@ -613,6 +622,20 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
                                                            : "PLI continues");
     } else {
         ok = state.decoder->decode(au, f, output_pixels);
+        if (!ok && state.decoder->failed() && !state.software_only) {
+            state.software_only = true;
+            state.configured = false;
+            need_keyframe_ = true;
+            if (keyframe && configure_decoder(unit, biggest, state))
+                ok = state.decoder->decode(au, f, output_pixels);
+            if (ok) need_keyframe_ = was_awaiting;
+            else request_keyframe(media_source);
+        }
+    }
+    {
+        std::lock_guard lock(mutex_);
+        stats_.decoder = state.configured ? state.decoder->backend_name() : "";
+        stats_.hardware_decode = state.configured ? state.decoder->hardware_accelerated() : std::nullopt;
     }
     const uint64_t t_published0 = now_ms();
     {
@@ -676,6 +699,7 @@ void FramePump::loop() {
     }
     if (options_.decode_video && state.decoder == nullptr) {
         state.decoder = create_platform_decoder();
+        state.platform_decoder = true;
     }
     // 两种后端都不可用时退出，避免解引用空 decoder。start() 通常已通过
     // 编译期能力检查拦截，此处仍保留防御检查。

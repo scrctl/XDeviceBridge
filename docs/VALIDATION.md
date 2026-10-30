@@ -867,3 +867,27 @@ Both software and confirmed hardware are fast enough for this 60-FPS clip.
 Potential implementation work is four-byte sample support, actual backend
 reporting, software fallback and consistent color handling; default-backend or
 asynchronous-pipeline changes require their own evidence.
+
+## macOS hardware-preferred implementation acceptance
+
+The production adapter now uses four-byte prefixes, requires a hardware
+VideoToolbox session, and supplies the software scaler's BT.601 default only
+when CoreMedia exposes no source matrix. Explicit source matrices are retained.
+On the same M2 Max/macOS 15.8.1 host and saved 590-AU device clip, the production
+adapter produced 590/590 pictures with hardware=true, 0.396 application CPU seconds,
+median 3.16 ms and p95 4.49 ms synchronous decode time. Software produced 590/590
+with hardware=false, 3.841 CPU seconds, median 1.57 ms and p95 3.16 ms. Mean first
+picture RGB difference was 0.93 levels. Both backends also decoded all eight
+synthetic large-NAL pictures (maximum NAL 481,859 bytes). These timings are offline
+application-process observations, not end-to-end latency, total system energy or
+proof that hardware is faster in every workload.
+
+On the existing paired iPhone over Wi-Fi, the actual Server RPC with omitted
+`hardware_decode` reported VideoToolbox/hardware=true and returned live frames;
+explicit false reported libavcodec/hevc/hardware=false and also returned live
+frames. Both had 1136x2464 geometry and no terminal error over approximately ten
+seconds each. This serial live comparison only validates backend selection and
+continued capture; receive counts are not used as a controlled performance result.
+The existing frame-capture regression covers platform configuration failure,
+terminal decode failure, software fallback on the same IDR, retained fallback,
+output-rate behavior and loss recovery. No consumer MaaFramework settings changed.

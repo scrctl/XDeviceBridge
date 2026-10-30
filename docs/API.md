@@ -530,7 +530,7 @@ conflicts are rejected without restarting another window's video.
 
 | Param | Type / default |
 | --- | --- |
-| hardware_decode | bool; default false; prefer platform decoder where supported |
+| hardware_decode | bool; default true; prefer platform hardware decoding, falling back to software when unavailable or failed |
 | max_fps | integer 0..240; default 0 (unlimited); maximum BGRA conversion/publication rate |
 | max_bitrate | uint64, bit/s; default 0 (device defaults); requested device video bitrate ceiling |
 | decode | bool; default true |
@@ -571,6 +571,11 @@ the Server; omission reuses it silently. Stop the producer before changing it
 (shared groups must all leave). This applies to decoded and encoded video, not
 audio. Check `capabilities.video_max_bitrate` for support. No universal bitrate
 or per-packet size guarantee is implied by the device's answer.
+
+On macOS, VideoToolbox uses four-byte NAL lengths and requests hardware decoding.
+`hardware_decode:false` explicitly selects software where available. Platforms
+without an implemented hardware backend continue to use software; fallback needs
+a software decoder in the build. Encoded-only recording does not select a decoder.
 
 ### `video.frame`
 
@@ -675,6 +680,9 @@ publication by the limiter, separately from decode failures.
 `video_max_bitrate` is the producer's requested device ceiling (0 for device
 defaults/no pump); `video_negotiated_max_bitrate` is the device's positive
 `TXMaxBitrate`, or null when unavailable. These do not measure current traffic.
+`video_decoder` names the active backend (empty before configuration/no decoded pump).
+`video_hardware_decode` is true/false for confirmed hardware/software, or null when
+unknown/uninitialized. A hardware preference alone is not proof of actual hardware use.
 
 Session required. No params. Result `{error:string,recording_error:string,
 video_unusable:bool}`. Empty strings mean no currently reported terminal failure,

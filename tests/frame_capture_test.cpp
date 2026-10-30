@@ -52,6 +52,7 @@ struct Script {
     std::atomic<unsigned> factories{0}, configured{0}, decoded{0}, materialized{0}, max_nal_calls{0}, stops{0}, probes{0};
     std::atomic<bool> decoder_available{false}, pixels{false};
     std::size_t platform_limit = ~std::size_t{0};
+    bool platform_config_fails = false, platform_decode_fails = false;
     bool local_present = true, send_ok = true;
     uint32_t local = 0;
     std::optional<Session::StartStatus> fail_next;
@@ -64,6 +65,7 @@ struct Script {
         factories = configured = decoded = materialized = max_nal_calls = stops = probes = 0;
         decoder_available = pixels = false;
         platform_limit = ~std::size_t{0};
+        platform_config_fails = platform_decode_fails = false;
         local_present = true; local = 0; send_ok = true;
     }
     void enqueue(Bytes packet) {
@@ -129,12 +131,18 @@ struct Directory {
 };
 class Decoder final : public xdb::Decoder {
     std::size_t limit_;
+    bool platform_;
 public:
-    explicit Decoder(std::size_t limit = ~std::size_t{0}) : limit_(limit) {}
-    bool configure(const Bytes&, const Bytes&, const Bytes&) override { ++script.configured; return true; }
+    explicit Decoder(std::size_t limit = ~std::size_t{0}, bool platform = false) : limit_(limit), platform_(platform) {}
+    bool configure(const Bytes&, const Bytes&, const Bytes&) override {
+        ++script.configured;
+        return !(platform_ && script.platform_config_fails);
+    }
+    bool failed() const override { return platform_ && script.platform_decode_fails; }
+    std::optional<bool> hardware_accelerated() const override { return platform_; }
     bool decode(const std::vector<Bytes>&, xdb::Frame& frame, bool output_pixels) override {
         ++script.decoded;
-        if (!script.pixels) return false;
+        if (!script.pixels || failed()) return false;
         if (!output_pixels) return true;
         ++script.materialized;
         frame.width = frame.height = 64; frame.row_pitch = 256; frame.pixels.assign(64u * 256u, 17);
@@ -221,6 +229,25 @@ void decoded_software_fallback() {
           pump->stats().decoded == 1 && pump->stats().dropped_oversized == 0,
           "oversized IDR switches to software and configures it before publishing pixels");
     (void)pump->finish_recording(error);
+}
+void decoded_platform_failure() {
+    for (bool during_decode : {false, true}) {
+        script.reset(); script.decoder_available = true; script.pixels = true;
+        script.platform_config_fails = !during_decode;
+        script.platform_decode_fails = during_decode;
+        xdb::remote::Device device; Pump::Options options; options.use_hardware = true;
+        std::string error; auto pump = Pump::start(device, options, error);
+        check(pump != nullptr, "platform-preferred video starts");
+        if (!pump) continue;
+        auto sequence = parameters(10); script.enqueue(rtp(sequence++, 0, idr, true));
+        check(pump->wait_ready(2000) && script.factories == 2 &&
+              pump->stats().hardware_decode == false,
+              "platform configure/decode failure falls back and publishes the same IDR");
+        script.enqueue(rtp(sequence++, 3000, idr, true));
+        check(wait([&] { return pump->serial() == 2; }) && script.factories == 2,
+              "fallback persists without recreating the platform decoder on the next frame");
+        (void)pump->finish_recording(error);
+    }
 }
 void decoded_output_rate() {
     xdb::remote::Device invalid_device; Pump::Options invalid; std::string invalid_error;
@@ -678,7 +705,7 @@ std::unique_ptr<Decoder> create_software_decoder() {
 }
 std::unique_ptr<Decoder> create_platform_decoder() {
     ++script.factories;
-    return script.decoder_available ? std::make_unique<::Decoder>(script.platform_limit) : nullptr;
+    return script.decoder_available ? std::make_unique<::Decoder>(script.platform_limit, true) : nullptr;
 }
 } // namespace xdb
 namespace xdb::media {
@@ -742,6 +769,7 @@ int main() {
     const bool available = xdb::media::recording_idr_checks_available(error);
     startup_and_default(directory, available);
     decoded_software_fallback();
+    decoded_platform_failure();
     decoded_output_rate();
     if (available) {
         stop_during_recovery(directory);

@@ -73,8 +73,7 @@ struct Offer {
     /// 已测设备中，提高该档未提高 answer 的 TXMaxBitrate；删除后码率或帧率下降。
     /// 后续真机确认降低 6 Mbps 档位可降低协商上限及实收码率；提高到 60 Mbps 仍回报 6 Mbps。
     /// 码率、分辨率和主机能力对照见 [CoreDevice §11](../../docs/coredevice.md#11-屏幕视频流的线上细节实测iphone-144--ios-270--usb)。
-    /// 已测码流可能包含超过 65535 字节的单个 NAL。当前 VideoToolbox 适配使用两字节
-    /// 长度前缀，遇到这种 NAL 需要软件解码后端；其他 VideoToolbox 配置需另行验证。
+    /// 已测码流可能包含超过 65535 字节的单个 NAL；VideoToolbox 使用四字节长度前缀。
     int rate_variant = 0;
 };
 

@@ -465,7 +465,7 @@ shared 模式只接受解码视频；相同参数复用生产者，冲突则拒�
 
 | 参数 | 类型／默认值 |
 | --- | --- |
-| hardware_decode | 布尔值；默认 false；在支持的平台优先使用平台解码器 |
+| hardware_decode | 布尔值；默认 true；优先平台硬解，不可用或失败时回退软解 |
 | max_fps | 整数 0..240；默认 0（不限速）；BGRA 转换／发布的最高帧率 |
 | max_bitrate | uint64，单位 bit/s；默认 0（设备默认值）；请求设备的视频码率上限 |
 | decode | 布尔值；默认 true |
@@ -496,6 +496,10 @@ shared 模式只接受解码视频；相同参数复用生产者，冲突则拒�
 返回 `warnings` 并写入 Server 日志，省略则静默沿用。更改须先停止生产者
 （共享组须全部退出）。适用于解码和纯编码视频，不影响音频。
 可通过 `capabilities.video_max_bitrate` 检查支持。设备答复不构成所有机型的码率或单包大小保证。
+
+macOS 的 VideoToolbox 使用四字节 NAL 长度并请求硬件解码。
+`hardware_decode:false` 显式优先软解；尚无硬解后端的平台继续使用软解。
+自动回退需要构建中包含软件解码器。只接收编码流的录制不选择解码器。
 
 ### `video.frame`
 
@@ -588,6 +592,9 @@ XDB 不会自动继续播放或调整设备音量。调用方须实际消费并�
 `video_max_bitrate` 是生产者请求的设备码率上限（0 表示设备默认值或没有 pump）；
 `video_negotiated_max_bitrate` 是设备返回的正整数 `TXMaxBitrate`，不可用时为 null。
 这两个字段都不是实时流量测量值。
+`video_decoder` 返回实际后端名称（未配置或没有解码 pump 时为空）；
+`video_hardware_decode` 在确认硬解／软解时为 true／false，未知或未初始化时为 null。
+硬解偏好不等同于实际使用硬件。
 
 需要会话，无参数。返回 `{error:string,recording_error:string,video_unusable:bool}`。
 空字符串表示当前未报告终结性失败，不证明最近仍有活动。

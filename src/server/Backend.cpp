@@ -497,6 +497,9 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
                     {"video_max_fps", s.video ? s.video->max_fps() : 0},
                     {"video_rate_limited", s.video ? s.video->stats().rate_limited : uint64_t(0)},
                     {"video_max_bitrate", s.video ? s.video->max_bitrate() : 0}};
+        const auto video_stats = s.video ? s.video->stats() : media::FramePump::Stats{};
+        r.result["video_decoder"] = video_stats.decoder;
+        r.result["video_hardware_decode"] = video_stats.hardware_decode ? Json(*video_stats.hardware_decode) : Json(nullptr);
         const auto negotiated = s.video ? s.video->negotiated_max_bitrate() : std::nullopt;
         r.result["video_negotiated_max_bitrate"] = negotiated ? Json(*negotiated) : Json(nullptr);
         return r;
@@ -587,11 +590,15 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         const uint64_t max_bitrate = detail::video_max_bitrate(p);
         if (max_fps && !p.value("decode", true))
             return Reply::failure("invalid_params", "max_fps requires decoded video");
+#ifndef XDB_HAVE_LIBAV
+        if (p.value("decode", true) && !p.value("hardware_decode", true))
+            return Reply::failure("unsupported", "Software video decoding is not included in this build");
+#endif
         Json profile;
         if (shared_control_) {
             if (!p.value("decode", true) || !p.value("record_path", std::string()).empty())
                 return Reply::failure("exclusive_session_required", "Recording requires an exclusive session");
-            profile = {{"hardware_decode", p.value("hardware_decode", false)}, {"decode", true},
+            profile = {{"hardware_decode", p.value("hardware_decode", true)}, {"decode", true},
                        {"restart_on_silence", p.value("restart_on_silence", true)}};
             if (s.video && profile != s.video_profile)
                 return Reply::failure("media_conflict", "Shared video parameters differ from the running stream");
@@ -603,8 +610,8 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
                 s.display = remote::DisplayWatcher::start(s.device, 1, error);
             media::FramePump::Options options;
             options.session_group = s.media_group;
-            options.use_hardware = p.value("hardware_decode", false);
             options.decode_video = p.value("decode", true);
+            options.use_hardware = p.value("hardware_decode", options.decode_video);
             options.max_fps = max_fps;
             options.offer.max_bitrate = max_bitrate;
             options.recorder = s.recorder.get();

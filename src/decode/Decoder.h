@@ -52,15 +52,14 @@ public:
     /// 原有像素判断本次成功；调用方应同时检查返回值和 Frame 的有效尺寸。
     virtual bool decode(const std::vector<Nal> &au, Frame &out, bool output_pixels = true) = 0;
 
-    /// 当前适配器接受的单个 NAL 字节数上限，不含起始码或长度前缀。
-    ///
-    /// 调用方取得完整 AU 后可据此选择后端。当前 VideoToolbox 适配器使用两字节
-    /// 长度前缀，上限为 65535；已有设备样本含 70101 字节的 NAL，需软件解码。
-    /// 这项限制来自当前适配配置，不能推断所有 VideoToolbox 会话都只能用两字节。
-    /// 默认 SIZE_MAX 表示接口未声明此项上限，不免除底层库或总缓冲大小的约束。
+    /// Maximum supported NAL size, excluding any sample prefix.
     [[nodiscard]] virtual size_t max_nal_size() const { return ~size_t { 0 }; }
 
     [[nodiscard]] virtual const char *backend_name() const = 0;
+    /// false for software, nullopt when a platform session's status is unavailable.
+    [[nodiscard]] virtual std::optional<bool> hardware_accelerated() const { return false; }
+    /// A backend error that requires recreation/fallback, distinct from delayed output.
+    [[nodiscard]] virtual bool failed() const { return false; }
 };
 
 /// 当前平台的默认后端：Apple 构建创建 VideoToolbox，其他构建转入软件工厂。
@@ -68,8 +67,8 @@ public:
 std::unique_ptr<Decoder> create_platform_decoder();
 
 /// 软件解码后端（libavcodec）。未编入此后端时返回 nullptr，调用方需处理空结果。
-/// 当前项目以它承接超出 VideoToolbox 适配器 NAL 长度上限的输入，并将它作为
-/// 非 Apple 平台的默认后端；是否具备 HEVC 解码器仍需 configure 检查。
+/// 平台后端不可用或失败时可回退至此；非 Apple 平台也将它作为默认后端。
+/// 是否具备 HEVC 解码器仍需 configure 检查。
 std::unique_ptr<Decoder> create_software_decoder();
 
 /// 本构建是否编入至少一种 HEVC 解码后端，可供调用方在起流前检查。

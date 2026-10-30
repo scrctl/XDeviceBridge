@@ -74,9 +74,8 @@ public:
         int silence_restart_ms = 3000;
         /// 起流时用的 offer（码率、能力串都在这里）。每次重起沿用同一份。
         Offer offer;
-        /// 使用平台硬件后端，macOS 当前为 VideoToolbox。默认软件解码可处理
-        /// 超过当前硬件适配 2 字节 NAL 长度上限的帧；实测 NAL 曾达 256278 字节。
-        /// 软件解码消耗更多 CPU，硬件解码遇到过大帧时可能切换后端或丢帧恢复。
+        /// Prefer the platform backend; the RPC defaults to true for decoded video.
+        /// Native callers retain their software default. Failures can fall back to software.
         bool use_hardware = false;
 
         /// 以下 debug 选项仅供探针，生产默认关闭。
@@ -100,6 +99,8 @@ public:
     };
 
     struct Stats {
+        std::string decoder;
+        std::optional<bool> hardware_decode;
         uint64_t packets = 0;
         /// 实际发布的像素帧数；因输出限速省略的图像另计 rate_limited。
         uint64_t decoded = 0;
