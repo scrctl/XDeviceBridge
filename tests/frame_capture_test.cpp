@@ -49,7 +49,7 @@ struct Script {
     std::deque<Bytes> audio_packets;
     std::vector<Session::Request> starts;
     std::vector<std::pair<Bytes, uint16_t>> sent;
-    std::atomic<unsigned> factories{0}, configured{0}, decoded{0}, max_nal_calls{0}, stops{0}, probes{0};
+    std::atomic<unsigned> factories{0}, configured{0}, decoded{0}, materialized{0}, max_nal_calls{0}, stops{0}, probes{0};
     std::atomic<bool> decoder_available{false}, pixels{false};
     std::size_t platform_limit = ~std::size_t{0};
     bool local_present = true, send_ok = true;
@@ -61,7 +61,7 @@ struct Script {
         std::lock_guard lock(mutex);
         packets.clear(); audio_packets.clear(); starts.clear(); sent.clear(); fail_next.reset();
         block_recovery = false; recovery_waiting = false;
-        factories = configured = decoded = max_nal_calls = stops = probes = 0;
+        factories = configured = decoded = materialized = max_nal_calls = stops = probes = 0;
         decoder_available = pixels = false;
         platform_limit = ~std::size_t{0};
         local_present = true; local = 0; send_ok = true;
@@ -132,9 +132,11 @@ class Decoder final : public xdb::Decoder {
 public:
     explicit Decoder(std::size_t limit = ~std::size_t{0}) : limit_(limit) {}
     bool configure(const Bytes&, const Bytes&, const Bytes&) override { ++script.configured; return true; }
-    bool decode(const std::vector<Bytes>&, xdb::Frame& frame) override {
+    bool decode(const std::vector<Bytes>&, xdb::Frame& frame, bool output_pixels) override {
         ++script.decoded;
         if (!script.pixels) return false;
+        if (!output_pixels) return true;
+        ++script.materialized;
         frame.width = frame.height = 64; frame.row_pitch = 256; frame.pixels.assign(64u * 256u, 17);
         return true;
     }
@@ -218,6 +220,45 @@ void decoded_software_fallback() {
     check(pump->wait_ready(2000) && script.factories == 2 && script.configured == 1 &&
           pump->stats().decoded == 1 && pump->stats().dropped_oversized == 0,
           "oversized IDR switches to software and configures it before publishing pixels");
+    (void)pump->finish_recording(error);
+}
+void decoded_output_rate() {
+    xdb::remote::Device invalid_device; Pump::Options invalid; std::string invalid_error;
+    invalid.max_fps = 241;
+    check(!Pump::start(invalid_device, invalid, invalid_error) &&
+          invalid_error.find("max_fps") != std::string::npos,
+          "native caller cannot exceed the documented output limit");
+    invalid.max_fps = 10; invalid.decode_video = false;
+    check(!Pump::start(invalid_device, invalid, invalid_error) &&
+          invalid_error.find("requires decoded video") != std::string::npos,
+          "native encoded-only caller cannot silently request an ineffective limit");
+    if (!xdb::kHaveDecoder) return;
+    script.reset(); script.decoder_available = true; script.pixels = true;
+    xdb::remote::Device device; Pump::Options options; options.max_fps = 1;
+    std::string error; auto pump = Pump::start(device, options, error);
+    check(pump != nullptr, "limited decoded pump starts");
+    if (!pump) return;
+    auto sequence = parameters(10);
+    script.enqueue(rtp(sequence++, 0, idr, true));
+    check(pump->wait_ready(2000) && pump->serial() == 1 && script.materialized == 1,
+          "limited pump publishes its first IDR immediately");
+    for (unsigned n = 1; n <= 3; ++n) script.enqueue(rtp(sequence++, n*3000, idr, true));
+    check(wait([&] { return pump->stats().rate_limited == 3; }) && script.decoded == 4 &&
+          script.materialized == 1 && pump->serial() == 1 && !pump->video_unusable(),
+          "limited AUs retain decoder reference processing without allocating pixels or advancing publication");
+    pump->set_max_fps(0);
+    script.enqueue(rtp(sequence++, 12000, idr, true));
+    check(wait([&] { return pump->serial() == 2; }) && script.materialized == 2,
+          "raising shared demand resumes output without restarting the stream");
+    pump->set_max_fps(1);
+    script.enqueue(rtp(sequence++, 15000, idr, true));
+    check(wait([&] { return pump->stats().rate_limited == 4; }) && pump->serial() == 2,
+          "lowering shared demand updates the running limiter");
+    // A sequence gap must still request an IDR and publish recovery immediately.
+    sequence += 1;
+    script.enqueue(rtp(sequence++, 18000, idr, true));
+    check(wait([&] { return pump->serial() == 3; }) && !pump->video_unusable(),
+          "rate limiting cannot suppress the first recovered keyframe");
     (void)pump->finish_recording(error);
 }
 std::unique_ptr<Pump> raw_pump(xdb::remote::Device& device, const Directory& directory,
@@ -695,6 +736,7 @@ int main() {
     const bool available = xdb::media::recording_idr_checks_available(error);
     startup_and_default(directory, available);
     decoded_software_fallback();
+    decoded_output_rate();
     if (available) {
         stop_during_recovery(directory);
         healthy_static_capture(directory); loss_and_validation(directory); alive_without_idr(directory); raw_file_failure(directory);

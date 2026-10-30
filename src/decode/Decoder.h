@@ -45,10 +45,12 @@ public:
     virtual bool configure(const Nal &vps, const Nal &sps, const Nal &pps) = 0;
 
     /// 提交一个 access unit，成功取得图像时返回 true。
+    /// output_pixels=false 时仍完整解码并排空输出，但跳过 CPU BGRA 转换/复制，
+    /// 不修改 out；返回 true 仅表示解出了图像。供发布限速使用，不丢参考帧。
     /// 返回 false 既可能表示暂时无输出，也可能表示输入、解码或转换失败；此接口
     /// 不区分这些原因，后续恢复由调用方处理。失败路径不统一清空 out，不能据其
     /// 原有像素判断本次成功；调用方应同时检查返回值和 Frame 的有效尺寸。
-    virtual bool decode(const std::vector<Nal> &au, Frame &out) = 0;
+    virtual bool decode(const std::vector<Nal> &au, Frame &out, bool output_pixels = true) = 0;
 
     /// 当前适配器接受的单个 NAL 字节数上限，不含起始码或长度前缀。
     ///

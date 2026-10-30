@@ -1,10 +1,41 @@
 #include "server/ApiParameters.h"
+#include "media/OutputRate.h"
 #include "transport/DeviceError.h"
 #include <iostream>
 #include <stdexcept>
 using nlohmann::json;
 int main() {
     using namespace xdb::server::detail;
+    using namespace std::chrono_literals;
+    if (video_max_fps(json::object()) != 0 || video_max_fps({{"max_fps", 0}}) != 0 ||
+        video_max_fps({{"max_fps", 10}}) != 10 || video_max_fps({{"max_fps", 240u}}) != 240)
+        throw std::runtime_error("video output rate defaults/range changed");
+    for (const auto &value : {json(-1), json(241), json(10.0), json(true), json(nullptr),
+                             json("10"), json(uint64_t(-1))}) {
+        bool rejected = false;
+        try { (void)video_max_fps({{"max_fps", value}}); } catch (const std::exception &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("invalid video output rate accepted");
+    }
+    xdb::media::OutputRate gate;
+    const auto now = std::chrono::steady_clock::time_point{};
+    if (!gate.due(10, now)) throw std::runtime_error("first frame rate limited");
+    gate.published(now);
+    if (gate.due(10, now + 99ms) || !gate.due(10, now + 100ms) || !gate.due(0, now))
+        throw std::runtime_error("output interval or unlimited mode failed");
+    gate.published(now + 10s);
+    if (gate.due(10, now + 10001ms) || !gate.due(60, now + 10017ms))
+        throw std::runtime_error("pause catch-up burst or live rate change");
+    xdb::media::OutputRateRequests rates;
+    rates.set("maa", 10); rates.set("mirror", 60);
+    if (rates.effective() != 60) throw std::runtime_error("low-rate owner capped another mirror");
+    rates.set("mirror", 0);
+    if (rates.effective() != 0) throw std::runtime_error("unlimited owner was rate limited");
+    rates.erase("mirror");
+    if (rates.effective() != 10) throw std::runtime_error("departed owner's rate retained");
+    rates.set("maa", 20);
+    if (rates.effective() != 20) throw std::runtime_error("same group created duplicate rate ownership");
+    rates.clear();
+    if (rates.effective() != 0) throw std::runtime_error("closed session retained rate requests");
     if (screenshot_format(json::object()) != "png" || screenshot_format({{"format", "bgra"}}) != "bgra")
         throw std::runtime_error("supported/default screenshot format changed");
     for (const auto &value : {json("jpeg"), json(""), json("PNG"), json(nullptr), json(1), json(true)}) {

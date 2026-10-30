@@ -729,3 +729,23 @@ five synthetic Android MotionEvent pointers. Safari observed five active device
 contacts, stable identities through movement and individual UP, then zero;
 a separate two-finger ACTION_CANCEL also ended at zero. Existing pairing data
 was retained. This is View-to-device acceptance, not a manual five-finger trial.
+
+## Server-side decoded output rate
+
+On the existing paired iPhone14,4/iOS 27.0.1 over Wi-Fi, a separate local macOS
+Server exercised `video.start.max_fps` without changing pairing or DDI. A sole
+10 FPS group reported an effective limit of 10 and skipped 149 pixel publications
+over about three seconds. Adding a 30 FPS group raised the effective limit to 30;
+its auxiliary attached socket retained the request after its initial socket
+closed. Updating that group to unlimited produced about 54 received frames/s,
+with no rate-limited publications. Closing its final attached socket restored
+the remaining group's limit to 10 and resumed skipped publications. Invalid
+limits did not change the active limit. These are client receive observations,
+not guaranteed target frame rates or measurements of CPU/power savings.
+
+Targeted offline checks cover input validation, no catch-up bursts, shared rate
+aggregation, continued decoding without pixel conversion, publication serials,
+live rate changes and loss-recovery IDR publication. The Android API 24 Server
+cross-build also passed. Device encoding/transport and recording remain
+unlimited; VideoToolbox still requests BGRA internally but skips the CPU readback
+for suppressed output.

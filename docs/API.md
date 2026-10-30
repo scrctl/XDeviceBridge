@@ -531,6 +531,7 @@ conflicts are rejected without restarting another window's video.
 | Param | Type / default |
 | --- | --- |
 | hardware_decode | bool; default false; prefer platform decoder where supported |
+| max_fps | integer 0..240; default 0 (unlimited); maximum BGRA conversion/publication rate |
 | decode | bool; default true |
 | record_path | string; default empty; nonempty must be an absolute raw HEVC output path |
 | restart_on_silence | bool; default true; enables a 3000 ms silence restart threshold |
@@ -539,8 +540,23 @@ Session required. Result `{}`. Starts a latest-frame producer; decoded start doe
 not wait for the first frame. Use video.frame to wait for data. Encoded-only start
 waits at most five seconds for checked recording readiness, resetting the video
 pump on failure. Builds without a decoder reject decode=true with `unsupported`.
-A repeated call while running reuses the current pump: it does not apply new
-options. Stop and start to change options; serialize control from attachments.
+A repeated call updates `max_fps` without restarting the pump; omission resets
+the request to unlimited. Other options keep their existing reuse/conflict rules.
+Stop and start to change other options; serialize control from attachments.
+
+Check `server.info.capabilities.video_max_fps:true` before relying on the limit;
+older Servers may ignore unknown parameters. The limiter skips software YUV-to-BGRA
+conversion (or the platform backend's CPU pixel copy) and publication, while
+continuing to decode the full reference chain. It does not reduce device encoding,
+incoming traffic or recording frame
+rate. The first frame after startup/recovery bypasses the limit. There are no
+catch-up bursts after pauses. Shared groups use the highest requested rate, with
+0/unlimited taking precedence; only groups that called `video.start` participate.
+Requests belong to a group, not each attached socket, and disappear when its last
+socket closes. A low-rate group may therefore receive faster updates while a
+higher-rate group is present. This is a producer limit, not a per-client traffic
+quota. This is an upper bound, not a target/minimum frame rate. `decode:false`
+rejects a nonzero limit.
 
 ### `video.frame`
 
@@ -638,6 +654,10 @@ still end the recording. If no usable initial media/clock arrives within the
 startup budget, recording startup still fails.
 
 ### `media.status`
+
+`video_max_fps` reports the effective producer limit (0 means unlimited, or no
+video pump). `video_rate_limited` counts decoded pictures omitted from BGRA
+publication by the limiter, separately from decode failures.
 
 Session required. No params. Result `{error:string,recording_error:string,
 video_unusable:bool}`. Empty strings mean no currently reported terminal failure,

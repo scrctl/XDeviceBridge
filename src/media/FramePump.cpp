@@ -1,6 +1,7 @@
 #include "util/OutputFile.h"
 #include "util/Bytes.h"
 #include "media/FramePump.h"
+#include "media/OutputRate.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -91,11 +92,16 @@ NokeyAction plan_nokey(const int restarts, const int max_restarts, const bool al
 }
 
 FramePump::FramePump(remote::Device &device, Options options, bool verbose)
-    : device_(device), options_(std::move(options)), media_lease_(options_.session_group), verbose_(verbose) {}
+    : device_(device), options_(std::move(options)), max_fps_(options_.max_fps),
+      media_lease_(options_.session_group), verbose_(verbose) {}
 
 std::unique_ptr<FramePump> FramePump::start(remote::Device &device, const Options &options,
                                             std::string &err, bool verbose) {
     auto pump = std::unique_ptr<FramePump>(new FramePump(device, options, verbose));
+    if (options.max_fps > 240 || (options.max_fps && !options.decode_video)) {
+        err = "max_fps must be in 0..240 and requires decoded video";
+        return nullptr;
+    }
     if (options.recorder != nullptr && !options.record_path.empty()) {
         err = "Raw HEVC and container recording cannot write to the same video pump";
         return nullptr;
@@ -308,6 +314,7 @@ bool FramePump::restart(std::string &err) {
 
 struct FramePump::WorkerState {
     std::unique_ptr<Decoder> decoder;
+    OutputRate output_rate;
     bool software_only = false;
     bool configured = false;
     std::optional<RecordingVideoConfig> encoded_config;
@@ -580,6 +587,10 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
     // 保留 publishing_.pixels 的容量和尺寸。同尺寸时由解码器直接覆写，
     // 避免 clear() 后 resize() 对整个图像缓冲区重新填零。
     Frame &f = publishing_;
+    // Keep decoding the complete reference chain. Only materialize pixels when
+    // due; first/recovery frames bypass the cap so readiness cannot be starved.
+    const bool output_pixels = !ever_keyframe_ || was_awaiting || reviving_ ||
+        state.output_rate.due(max_fps_.load(), std::chrono::steady_clock::now());
     const uint64_t t_decode0 = now_ms();
     bool ok = false;
     // 默认仅向丢包恢复期间的关键帧注入失败，验证解码无输出后仍会继续
@@ -599,7 +610,7 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
                     options_.debug_suppress_pli_after_fail ? "further PLI disabled"
                                                            : "PLI continues");
     } else {
-        ok = state.decoder->decode(au, f);
+        ok = state.decoder->decode(au, f, output_pixels);
     }
     const uint64_t t_published0 = now_ms();
     {
@@ -607,7 +618,7 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
         stats_.ms_decode += static_cast<double>(t_published0 - t_decode0);
         ++stats_.decode_calls;
     }
-    if (!ok || !f) {
+    if (!ok || (output_pixels && !f)) {
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.no_output;
         return;
@@ -629,6 +640,10 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
         video_unusable_ = false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!output_pixels) {
+        ++stats_.rate_limited;
+        return;
+    }
     reviving_ = false;  // 新会话已输出第一帧，结束恢复等待。
     // 交换两个帧缓冲区，下一次解码复用上一帧的内存，避免 move 后
     // 解码目标失去缓冲区并重新分配。尺寸变化仍由解码器处理。
@@ -637,6 +652,7 @@ void FramePump::on_access_unit(AnnexBParser::AccessUnit &&unit, WorkerState &sta
     width_ = static_cast<int>(frame_.width);
     height_ = static_cast<int>(frame_.height);
     ++serial_;
+    state.output_rate.published(std::chrono::steady_clock::now());
     ready_ = true;
     ++stats_.decoded;
     cv_.notify_all();

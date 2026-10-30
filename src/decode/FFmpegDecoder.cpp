@@ -71,7 +71,7 @@ public:
         return true;
     }
 
-    bool decode(const std::vector<Nal> &au, Frame &out) override {
+    bool decode(const std::vector<Nal> &au, Frame &out, bool output_pixels) override {
         if (ctx_ == nullptr) {
             return false;
         }
@@ -102,7 +102,7 @@ public:
         int send_st = avcodec_send_packet(ctx_, pkt.get());
         if (send_st == AVERROR(EAGAIN)) {
             // 输出未排空时输入尚未被消费。保留原包，先取尽积压再重试一次。
-            if (!drain(out, produced)) return false;
+            if (!drain(out, produced, output_pixels)) return false;
             send_st = avcodec_send_packet(ctx_, pkt.get());
         }
         if (send_st < 0) {
@@ -114,18 +114,18 @@ public:
         }
 
         // 一个包可能释放多帧，全部读取并只向镜像调用方保留最新画面。
-        return drain(out, produced) && produced;
+        return drain(out, produced, output_pixels) && produced;
     }
 
     [[nodiscard]] const char *backend_name() const override { return "libavcodec/hevc"; }
 
 private:
-    bool drain(Frame &out, bool &produced) {
+    bool drain(Frame &out, bool &produced, bool output_pixels) {
         for (;;) {
             av_frame_unref(frame_);
             const int status = avcodec_receive_frame(ctx_, frame_);
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return true;
-            if (status < 0 || !to_frame(frame_, out)) return false;
+            if (status < 0 || (output_pixels && !to_frame(frame_, out))) return false;
             produced = true;
         }
     }

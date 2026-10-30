@@ -162,7 +162,7 @@ void xdb_server::run_client(Worker &worker) noexcept {
                 if (method == "server.info")
                     result.result = {
                         {"protocol", ipc::protocol_version}, {"version", XDB_VERSION_STRING}, {"device_transport", "usb-or-wifi"},
-                        {"capabilities", {{"mdns_diagnostics", true}, {"pairing_display_brand", true}, {"manual_connections", true},
+                        {"capabilities", {{"video_max_fps", true}, {"mdns_diagnostics", true}, {"pairing_display_brand", true}, {"manual_connections", true},
                                           {"read_only_sessions", true}, {"shared_control_sessions", true}}},
 #ifdef _WIN32
                         {"pid", GetCurrentProcessId()}};

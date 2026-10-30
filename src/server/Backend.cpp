@@ -8,6 +8,7 @@
 #include "hid/TouchState.h"
 #include "media/AudioPump.h"
 #include "media/FramePump.h"
+#include "media/OutputRate.h"
 #include "media/Recorder.h"
 #include "media/ScreenshotSource.h"
 #include "net/Stack.h"
@@ -146,6 +147,7 @@ struct Backend::Session {
     // Non-owning entries are protected by control_mutex, including destruction.
     std::map<std::string, SharedControl *> shared_controls;
     Json video_profile;
+    media::OutputRateRequests video_rates;
     std::string audio_owner, touch_owner;
     std::shared_mutex media_mutex;
     std::mutex control_mutex, pcm_mutex;
@@ -206,6 +208,7 @@ struct Backend::Session {
         release_inputs();
         shared_mode = false;
         video_profile = Json();
+        video_rates.clear();
         audio_owner.clear();
         touch_owner.clear();
         // Readers may retain the Device for screenshots, but not its old media
@@ -255,6 +258,8 @@ void Backend::Session::detach_shared(SharedControl &owner) {
     std::lock_guard control_lock(control_mutex);
     if (retired) return;
     shared_controls.erase(owner.attachment);
+    video_rates.erase(owner.attachment);
+    if (video) video->set_max_fps(video_rates.effective());
     std::set<uint16_t> remaining_keys;
     std::set<std::pair<uint16_t, uint16_t>> remaining_buttons;
     for (const auto &[key, other] : shared_controls) {
@@ -487,7 +492,9 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         if (!s.video && s.audio && !s.audio->terminal_error().empty())
             terminal = s.audio->terminal_error();
         r.result = {{"error", terminal}, {"video_unusable", s.video && s.video->video_unusable()},
-                    {"recording_error", recording_error}};
+                    {"recording_error", recording_error},
+                    {"video_max_fps", s.video ? s.video->max_fps() : 0},
+                    {"video_rate_limited", s.video ? s.video->stats().rate_limited : uint64_t(0)}};
         return r;
     }
     if (method == "recording.configure") {
@@ -572,6 +579,9 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         return r;
     }
     if (method == "video.start") {
+        const unsigned max_fps = detail::video_max_fps(p);
+        if (max_fps && !p.value("decode", true))
+            return Reply::failure("invalid_params", "max_fps requires decoded video");
         Json profile;
         if (shared_control_) {
             if (!p.value("decode", true) || !p.value("record_path", std::string()).empty())
@@ -590,6 +600,7 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
             options.session_group = s.media_group;
             options.use_hardware = p.value("hardware_decode", false);
             options.decode_video = p.value("decode", true);
+            options.max_fps = max_fps;
             options.recorder = s.recorder.get();
             options.record_path = p.value("record_path", std::string());
             if (!options.record_path.empty() && !std::filesystem::u8path(options.record_path).is_absolute())
@@ -607,6 +618,12 @@ Reply Backend::handle(const std::string &method, const Json &p, const Event &eve
         }
         if (!s.video)
             return fail(error);
+        if (shared_control_) {
+            s.video_rates.set(shared_control_->attachment, max_fps);
+            s.video->set_max_fps(s.video_rates.effective());
+        } else {
+            s.video->set_max_fps(max_fps);
+        }
         if (!p.value("decode", true) && !s.video->wait_ready(5000)) {
             error = s.video->capture_error();
             s.video.reset();

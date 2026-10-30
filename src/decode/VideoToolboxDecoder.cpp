@@ -91,7 +91,7 @@ public:
         return true;
     }
 
-    bool decode(const std::vector<Nal> &au, Frame &out) override {
+    bool decode(const std::vector<Nal> &au, Frame &out, bool output_pixels) override {
         if (session_ == nullptr) {
             return false;
         }
@@ -176,10 +176,10 @@ public:
         if (slot.pb == nullptr) {
             return false;
         }
-        copy_out(slot.pb, out);
+        if (output_pixels) copy_out(slot.pb, out);
         CVPixelBufferRelease(slot.pb);
         slot.pb = nullptr;
-        return static_cast<bool>(out);
+        return !output_pixels || static_cast<bool>(out);
     }
 
     [[nodiscard]] const char *backend_name() const override { return "VideoToolbox"; }

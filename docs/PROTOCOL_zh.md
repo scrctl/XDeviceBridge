@@ -105,7 +105,7 @@ C 符号所有权、线程和接口参考见 [C_API_zh.md](C_API_zh.md)。
 | `connection.close` | 无 | 释放服务、输入和设备租约 |
 | `device.info` | 无 | 设备 UDID、系统版本、型号 |
 | `screenshot` | 可选 `format`：png/bgra（默认 png） | PNG 正文或解码后的 BGRA 像素，附显示几何 |
-| `video.start` | 可选 `hardware_decode` | 启动后台最新帧采集 |
+| `video.start` | 可选 `hardware_decode`、`max_fps` | 启动后台最新帧采集 |
 | `video.frame` | `since`：帧序号，`timeout_ms`：0..1000 | BGRA 格式、序号、宽高、行跨度、可选显示几何；原始像素 |
 | `video.stop` | 无 | 停止视频 pump |
 | `input.tap` | `x`、`y`：0..1；`hold_ms`：0..2000 | 报告发送状态 |
@@ -216,6 +216,10 @@ C ABI 中没有 FFmpeg、OpenCV、C++ 对象或 GPU 句柄。
 - `video.start`：另接受 `decode`（默认 true）、`record_path`
   （原始 HEVC 的服务端绝对路径）和 `restart_on_silence`（默认 true）。
   只接收编码流时，须以经过检查的录制 IDR 确认就绪，调用才成功。
+- `video.start.max_fps`：整数 0..240，默认 0／不限速，通过 `capabilities.video_max_fps` 协商。
+  限制 BGRA 转换／复制和发布，不限制设备编码、参考帧解码或录制；运行中可以更新。
+  共享组取最高需求（不限速优先），退出组后移除该组需求；启动／恢复首帧不受限。
+  `media.status.video_max_fps` 返回实际上限，`video_rate_limited` 统计因限速跳过的像素发布次数。
 - `video.frame`：`allow_cached` 允许等待到期后复用健康最新帧。
   几何随发布帧一起采集，不在之后读取。
 - `screenshot`：`format: "bgra"` 请求服务端 PNG 解码；默认仍为 PNG。

@@ -101,6 +101,17 @@ int main() {
             check(!produced && script.sends == 2 && script.receives == 1,"contradictory EAGAIN is bounded to one retry");
         }
     }
+    script = {}; script.mode = Mode::Multiple;
+    auto limited = xdb::create_software_decoder();
+    check(limited && limited->configure(vps,sps,pps),"limited decoder configures");
+    if (limited) {
+        xdb::Frame untouched; untouched.width = 7; untouched.pixels = {1,2,3};
+        check(limited->decode({idr},untouched,false) && script.frames.empty() &&
+              untouched.width == 7 && untouched.pixels == std::vector<uint8_t>({1,2,3}),
+              "rate-limited decode drains all pictures without materializing or replacing pixels");
+        check(limited->decode({idr},untouched) && picture(untouched,25),
+              "output resumes on the next AU with no stale decoder backlog");
+    }
     script = {};
     auto decoder = xdb::create_software_decoder();
     check(decoder && decoder->configure(vps,sps,pps),"real HEVC decoder configures");

@@ -62,6 +62,8 @@ public:
         /// 必须有上述录制消费者；完整 IDR 的参数与 slice header 检查决定
         /// 是否已就绪和恢复，不把语法有效当成整张图像可解码的证明。
         bool decode_video = true;
+        /// CPU BGRA 转换/发布上限，0 不限速。解码参考链、收流和录制保持完整。
+        unsigned max_fps = 0;
         /// 丢包后等待干净关键帧的最长时间，0 禁用此项后备重建。
         /// 优先发 PLI 请求 IDR，超时后重建会话。早期“设备不响应 PLI”的结论
         /// 来自错误的 UDP 封包；修复后真机已确认 PLI 有效，见 docs/coredevice.md §13。
@@ -99,6 +101,7 @@ public:
 
     struct Stats {
         uint64_t packets = 0;
+        /// 实际发布的像素帧数；因输出限速省略的图像另计 rate_limited。
         uint64_t decoded = 0;
         /// 解了但没出图的 AU 数（参考帧未就绪，或丢了分片）。
         uint64_t no_output = 0;
@@ -146,6 +149,8 @@ public:
         /// 拆包、解码和发布累计耗时，单位毫秒；与调用次数共同用于分析每帧开销。
         double ms_depacketize = 0, ms_decode = 0, ms_publish = 0;
         uint64_t decode_calls = 0;
+        /// 仍已解码但省略 CPU 图像转换/复制及发布的 AU 数，不属于失败。
+        uint64_t rate_limited = 0;
     };
 
     /// 在 Device 连接上启动媒体泵；失败时 err 包含原因。
@@ -170,6 +175,9 @@ public:
     /// 停止、不可用或超时返回 false；丢包/重建后须再次取得合法 IDR。
     bool wait_ready(int timeout_ms);
     [[nodiscard]] bool decodes_video() const noexcept { return options_.decode_video; }
+    /// 可由会话线程更新；worker 在下一 AU 读取，共享组使用最高需求。
+    void set_max_fps(unsigned fps) { max_fps_ = fps; }
+    [[nodiscard]] unsigned max_fps() const { return max_fps_.load(); }
     /// 复制录制消费者/裸文件的首错，或导致 worker 永久终止的错误。
     /// 可恢复的视频不可用标记不在此接口中；不会借用 worker 的字符串。
     [[nodiscard]] std::string capture_error() const;
@@ -226,6 +234,7 @@ private:
 
     xdb::remote::Device &device_;
     Options options_;
+    std::atomic<unsigned> max_fps_{0};
     SessionGroup::Lease media_lease_;
     bool verbose_ = false;
 
