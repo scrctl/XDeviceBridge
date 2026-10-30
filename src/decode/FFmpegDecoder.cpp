@@ -1,10 +1,14 @@
 #include "decode/Swscale.h"
 #include "decode/Decoder.h"
+#if defined(__ANDROID__)
+#include "decode/AndroidMediaCodec.h"
+#endif
 
 // 以 C 链接约定声明 libav 接口，与其库导出的符号一致。
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
@@ -24,17 +28,18 @@ std::string av_strerr(int st) {
     return buf;
 }
 
-/// libavcodec HEVC 软件后端。输入转换为 Annex-B，输出经 swscale 转为 CPU BGRA。
-/// 当前项目将其用于非 Apple 平台，以及超出 VideoToolbox 适配器 NAL 上限的码流。
+/// libavcodec HEVC 后端，Android 可选 MediaCodec；输出经 swscale 转为 CPU BGRA。
 /// ctx_、frame_、sws_ 和参数集缓存由实例拥有，同一实例不提供并发调用保护。
 class FFmpegDecoder final : public Decoder {
 public:
+    explicit FFmpegDecoder(bool mediacodec = false) : mediacodec_(mediacodec) {}
     ~FFmpegDecoder() override { teardown(); }
 
     bool configure(const Nal &vps, const Nal &sps, const Nal &pps) override {
         teardown();
 
-        const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
+        const AVCodec *codec = mediacodec_ ? avcodec_find_decoder_by_name("hevc_mediacodec")
+                                          : avcodec_find_decoder(AV_CODEC_ID_HEVC);
         if (codec == nullptr) {
             std::fprintf(stderr, "FFmpeg has no HEVC decoder\n");
             return false;
@@ -43,13 +48,36 @@ public:
         if (ctx_ == nullptr) {
             return false;
         }
+        if (mediacodec_) {
+            // NDK byte-buffer output works without a JVM or an Android Surface.
+            if (av_opt_set_int(ctx_->priv_data, "ndk_codec", 1, 0) < 0) {
+                teardown();
+                return false;
+            }
+            std::vector<uint8_t> extra;
+            append_nal(extra, vps);
+            append_nal(extra, sps);
+            append_nal(extra, pps);
+            ctx_->extradata = static_cast<uint8_t *>(av_mallocz(extra.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+            if (!ctx_->extradata) { teardown(); return false; }
+            std::memcpy(ctx_->extradata, extra.data(), extra.size());
+            ctx_->extradata_size = static_cast<int>(extra.size());
+            ctx_->pkt_timebase = AVRational { 1, 1000000 };
+            ctx_->get_format = [](AVCodecContext *, const AVPixelFormat *formats) {
+                for (; *formats != AV_PIX_FMT_NONE; ++formats) {
+                    const auto *desc = av_pix_fmt_desc_get(*formats);
+                    if (desc && !(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) return *formats;
+                }
+                return AV_PIX_FMT_NONE;
+            };
+        }
         // 请求低延迟解码；已有设备样本未观察到 B 帧。此标志不保证每次提交
         // 都产生输出，也不能替代解码器自身的参考帧和线程调度要求。
         ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
         // 由 libavcodec 自动选择线程数；这是库内部并行，不允许调用方并发操作 ctx_。
         ctx_->thread_count = 0;
         // 打开解码上下文后才允许提交 packet；参数集将在 decode 中随 AU 提交。
-        const int open_st = avcodec_open2(ctx_, codec, nullptr);
+        const int open_st = mediacodec_ ? 0 : avcodec_open2(ctx_, codec, nullptr);
         if (open_st < 0) {
             std::fprintf(stderr, "Failed to open FFmpeg HEVC decoder: %s\n",
                          av_strerr(open_st).c_str());
@@ -98,6 +126,22 @@ public:
         }
         std::memcpy(pkt->data, annexb.data(), annexb.size());
 
+        if (mediacodec_ && !opened_) {
+            // MediaCodec needs coded dimensions and may invent a color matrix
+            // for an unspecified source. Probe one IDR with the native decoder
+            // to preserve source geometry/color; subsequent AUs stay in hardware.
+            const bool source_format = read_source_format(pkt.get());
+            bool supported = source_format && ctx_->width > 0 && ctx_->height > 0;
+#if defined(__ANDROID__)
+            supported = supported && detail::android_mediacodec_supports_size(ctx_->width, ctx_->height);
+#endif
+            if (!supported || avcodec_open2(ctx_, ctx_->codec, nullptr) < 0) {
+                failed_ = true;
+                return false;
+            }
+            opened_ = true;
+        }
+        if (mediacodec_) pkt->pts = packet_serial_++;
         bool produced = false;
         int send_st = avcodec_send_packet(ctx_, pkt.get());
         if (send_st == AVERROR(EAGAIN)) {
@@ -110,6 +154,7 @@ public:
             std::call_once(warned, [send_st] {
                 std::fprintf(stderr, "FFmpeg rejected packet: %s\n", av_strerr(send_st).c_str());
             });
+            failed_ = mediacodec_;
             return false;
         }
 
@@ -117,15 +162,47 @@ public:
         return drain(out, produced, output_pixels) && produced;
     }
 
-    [[nodiscard]] const char *backend_name() const override { return "libavcodec/hevc"; }
+    [[nodiscard]] const char *backend_name() const override {
+        return mediacodec_ ? "libavcodec/hevc_mediacodec" : "libavcodec/hevc";
+    }
+    [[nodiscard]] std::optional<bool> hardware_accelerated() const override {
+        // MediaCodec may select a vendor or a system software codec. The FFmpeg
+        // API does not expose that identity, so do not claim hardware use here.
+        return mediacodec_ ? std::nullopt : std::optional<bool>(false);
+    }
+    [[nodiscard]] bool failed() const override { return failed_; }
 
 private:
+    bool read_source_format(const AVPacket *packet) {
+        const AVCodec *codec = avcodec_find_decoder_by_name("hevc");
+        if (!codec) return false;
+        AVCodecContext *source = avcodec_alloc_context3(codec);
+        if (!source) return false;
+        source->thread_count = 1;
+        source->flags |= AV_CODEC_FLAG_LOW_DELAY;
+        av_frame_unref(frame_);
+        const bool decoded = avcodec_open2(source, codec, nullptr) >= 0 &&
+            avcodec_send_packet(source, packet) >= 0 && avcodec_receive_frame(source, frame_) >= 0;
+        if (decoded) {
+            ctx_->width = source->coded_width > 0 ? source->coded_width : frame_->width;
+            ctx_->height = source->coded_height > 0 ? source->coded_height : frame_->height;
+            source_colorspace_ = frame_->colorspace;
+            source_range_ = frame_->color_range;
+        }
+        av_frame_unref(frame_);
+        avcodec_free_context(&source);
+        return decoded;
+    }
+
     bool drain(Frame &out, bool &produced, bool output_pixels) {
         for (;;) {
             av_frame_unref(frame_);
             const int status = avcodec_receive_frame(ctx_, frame_);
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return true;
-            if (status < 0 || (output_pixels && !to_frame(frame_, out))) return false;
+            if (status < 0 || (output_pixels && !to_frame(frame_, out))) {
+                failed_ = mediacodec_;
+                return false;
+            }
             produced = true;
         }
     }
@@ -178,7 +255,12 @@ private:
 
         uint8_t *dst_data[4] = {out.pixels.data(), nullptr, nullptr, nullptr};
         const int dst_linesize[4] = {static_cast<int>(row_bytes), 0, 0, 0};
-        if (!detail::prepare_bgra_scaler(sws_, *f) ||
+        AVFrame color = *f;
+        if (mediacodec_) {
+            color.colorspace = source_colorspace_;
+            color.color_range = source_range_;
+        }
+        if (!detail::prepare_bgra_scaler(sws_, color) ||
             sws_scale(sws_, f->data, f->linesize, 0, h, dst_data, dst_linesize) <= 0) {
             out = Frame {};
             return false;
@@ -187,6 +269,9 @@ private:
     }
 
     void teardown() {
+        failed_ = false;
+        opened_ = false;
+        packet_serial_ = 0;
         if (sws_ != nullptr) {
             sws_freeContext(sws_);
             sws_ = nullptr;
@@ -201,6 +286,12 @@ private:
         }
     }
 
+    bool mediacodec_ = false;
+    bool failed_ = false;
+    bool opened_ = false;
+    int64_t packet_serial_ = 0;
+    AVColorSpace source_colorspace_ = AVCOL_SPC_UNSPECIFIED;
+    AVColorRange source_range_ = AVCOL_RANGE_UNSPECIFIED;
     AVCodecContext *ctx_ = nullptr;
     AVFrame *frame_ = nullptr;
     SwsContext *sws_ = nullptr;
@@ -212,5 +303,11 @@ private:
 std::unique_ptr<Decoder> create_software_decoder() {
     return std::make_unique<FFmpegDecoder>();
 }
+
+#if defined(__ANDROID__)
+std::unique_ptr<Decoder> create_platform_decoder() {
+    return std::make_unique<FFmpegDecoder>(true);
+}
+#endif
 
 }  // namespace xdb

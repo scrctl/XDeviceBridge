@@ -891,3 +891,49 @@ continued capture; receive counts are not used as a controlled performance resul
 The existing frame-capture regression covers platform configuration failure,
 terminal decode failure, software fallback on the same IDR, retained fallback,
 output-rate behavior and loss recovery. No consumer MaaFramework settings changed.
+
+
+## Android MediaCodec sample acceptance (2026-10-30)
+
+Android API 36 devices Xiaomi 13 Ultra and ROCK 5 (reported hardware `mt6789`)
+were tested using an independent JNI/app_process sample harness, without
+installing an application or changing iPhone pairing/DDI state. Both expose
+hardware HEVC components: `c2.qti.hevc.decoder` and `c2.mtk.hevc.decoder`,
+respectively. These names were observed in FFmpeg's actual codec startup log
+and matched Android's hardware-codec enumeration.
+
+The same saved iPhone clip (590 access units, 1136x2464, maximum NAL 44,149 bytes)
+decoded completely on both devices: 590 output pictures after draining EOS,
+with no decoder error. A receive-boundary counter was used: the Decoder API
+returns the latest picture after draining, so its successful-call count is not
+the number of decoded pictures. End-of-file buffered pictures are not classified
+as lost frames. A 120-AU 720x1562 derivative also decoded, and a static 30-picture
+720x1562 color-bar clip produced byte-identical CPU BGRA output to software on
+both devices, including the non-multiple-of-16 display height.
+
+For the original clip, the Xiaomi hardware/software process CPU times were
+approximately 6.0/23.5 seconds; ROCK 5 was approximately 11.2/21 seconds.
+ROCK 5 hardware wall time was about 10.3 seconds versus 6.7 seconds for software.
+These sequential, unpaced offline observations include CPU BGRA conversion and
+EOS draining. They are not live FPS, end-to-end latency, system CPU, thermal or
+energy measurements; hardware use does not establish a latency improvement.
+
+Without a registered JVM, creating the MediaCodec component by MIME stalled on
+ROCK 5. With JVM-backed component discovery, named creation and system size
+checks, both the original and reduced-size samples completed. The implementation
+therefore requires JVM-backed capability checks before opening MediaCodec;
+unavailable integration or unsupported sizes use the existing software fallback.
+This is not evidence that ROCK 5 cannot decode the original size: Android reports
+that size as supported, and named creation decoded it successfully.
+
+The Qualcomm component supplied BT.709 for the original clip's unspecified
+matrix, producing a mean RGB difference of 6.19 levels against software. The
+adapter now probes only the first IDR in software for coded dimensions and source
+color metadata, then uses MediaCodec for decoding. A sequence repeating the
+original IDR produced byte-identical software/hardware BGRA on both devices;
+all 50 hardware pictures were counted separately from the software format probe.
+The final original-clip runs again decoded all 590 pictures on both devices.
+
+The Android server cross-build passed. Existing FFmpeg-decoder and frame-capture
+regressions passed, including platform failure and software fallback. No Android
+application was installed/tested and no new real-time preview claim is made.

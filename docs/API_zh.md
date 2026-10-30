@@ -498,6 +498,11 @@ shared 模式只接受解码视频；相同参数复用生产者，冲突则拒�
 可通过 `capabilities.video_max_bitrate` 检查支持。设备答复不构成所有机型的码率或单包大小保证。
 
 macOS 的 VideoToolbox 使用四字节 NAL 长度并请求硬件解码。
+Android 在构建包含 `hevc_mediacodec` 和原生 HEVC 解码器时使用 MediaCodec NDK 字节缓冲后端。
+首个关键帧仅在起流时用软件探测一次源尺寸和色彩，后续使用 MediaCodec 解码。
+内嵌 Java SDK 的 `NsdDiscovery.acquire(context)` 会注册 JVM，用于系统解码器发现和尺寸检查。
+未完成此集成、Android 版本低于 API 29 或尺寸不支持时回退软件解码。
+FFmpeg 公共 API 不暴露具体 MediaCodec 组件，因此此后端的 `video_hardware_decode` 为 null。
 `hardware_decode:false` 显式优先软解；尚无硬解后端的平台继续使用软解。
 自动回退需要构建中包含软件解码器。只接收编码流的录制不选择解码器。
 

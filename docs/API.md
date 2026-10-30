@@ -573,6 +573,14 @@ audio. Check `capabilities.video_max_bitrate` for support. No universal bitrate
 or per-packet size guarantee is implied by the device's answer.
 
 On macOS, VideoToolbox uses four-byte NAL lengths and requests hardware decoding.
+Android uses FFmpeg’s MediaCodec NDK byte-buffer backend when built with
+`hevc_mediacodec` and the native HEVC decoder. The first keyframe is probed once
+in software to preserve source geometry and color; subsequent decoding uses
+MediaCodec. The embedded Java SDK’s `NsdDiscovery.acquire(context)` registers the
+JVM used for system codec discovery and size checks. Without that integration,
+on Android versions below API 29, or for unsupported sizes, decoding falls back
+to software. MediaCodec’s concrete component is not exposed by FFmpeg’s public
+API, so `video_hardware_decode` remains null for this backend.
 `hardware_decode:false` explicitly selects software where available. Platforms
 without an implemented hardware backend continue to use software; fallback needs
 a software decoder in the build. Encoded-only recording does not select a decoder.

@@ -62,12 +62,12 @@ public:
     [[nodiscard]] virtual bool failed() const { return false; }
 };
 
-/// 当前平台的默认后端：Apple 构建创建 VideoToolbox，其他构建转入软件工厂。
+/// 当前平台的默认后端：Apple 使用 VideoToolbox，Android 使用 MediaCodec，其他平台使用软件。
 /// 工厂返回对象不代表 configure 一定成功，也不保证使用硬件解码。
 std::unique_ptr<Decoder> create_platform_decoder();
 
 /// 软件解码后端（libavcodec）。未编入此后端时返回 nullptr，调用方需处理空结果。
-/// 平台后端不可用或失败时可回退至此；非 Apple 平台也将它作为默认后端。
+/// 平台后端不可用或失败时可回退至此。
 /// 是否具备 HEVC 解码器仍需 configure 检查。
 std::unique_ptr<Decoder> create_software_decoder();
 

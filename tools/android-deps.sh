@@ -217,7 +217,7 @@ build_curl() {
 
 # FFmpeg is shared so consumers can replace the LGPL libraries independently.
 build_ffmpeg() {
-    local recipe="ffmpeg-$FFMPEG_VERSION arm64-v8a api-$ANDROID_API ndk-$(basename "$NDK") recipe-1"
+    local recipe="ffmpeg-$FFMPEG_VERSION arm64-v8a api-$ANDROID_API ndk-$(basename "$NDK") recipe-2-mediacodec"
     local marker="$PREFIX/share/ffmpeg/xdb-build.txt"
     if [ -f "$PREFIX/lib/libavcodec.so" ] && [ -f "$PREFIX/lib/libavutil.so" ] \
        && [ -f "$PREFIX/lib/libswscale.so" ] && [ -f "$PREFIX/include/libavcodec/avcodec.h" ] \
@@ -248,7 +248,7 @@ build_ffmpeg() {
             --disable-avformat --disable-avdevice --disable-avfilter --disable-swresample \
             --enable-shared --disable-static --enable-pic --enable-pthreads \
             --enable-avcodec --enable-avutil --enable-swscale \
-            --enable-decoder=hevc,png --enable-parser=hevc --enable-zlib
+            --enable-jni --enable-mediacodec --enable-decoder=hevc,hevc_mediacodec,png --enable-parser=hevc --enable-zlib
         make -j"$JOBS"
         make install
     )

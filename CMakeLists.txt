@@ -291,6 +291,9 @@ else()
 endif()
 if(XDB_LIBAV_FOUND)
     target_sources(xdb_core PRIVATE src/decode/FFmpegDecoder.cpp)
+    if(ANDROID)
+        target_sources(xdb_core PRIVATE src/decode/AndroidMediaCodec.cpp)
+    endif()
     # 静态库的 libav 符号由最终可执行文件链接，需要向使用方传递链接依赖。
     target_link_libraries(xdb_core PUBLIC PkgConfig::LIBAV)
     # Decoder.h 的 kHaveDecoder 依赖这个宏；库与调用方必须看到相同定义，

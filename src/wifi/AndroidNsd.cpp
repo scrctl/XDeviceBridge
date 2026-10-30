@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "wifi/AndroidNsd.h"
 #include <jni.h>
+#if defined(XDB_HAVE_LIBAV)
+extern "C" {
+#include <libavcodec/jni.h>
+}
+#endif
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -73,6 +78,9 @@ Java_org_xdevicebridge_NsdDiscovery_install(JNIEnv *env, jclass, jobject instanc
     if (instance) {
         replacement = std::make_shared<Provider>();
         env->GetJavaVM(&replacement->vm);
+#if defined(XDB_HAVE_LIBAV)
+        av_jni_set_java_vm(replacement->vm, nullptr);
+#endif
         auto type = env->GetObjectClass(instance);
         replacement->snapshot = env->GetMethodID(type, "snapshot", "()[B");
         env->DeleteLocalRef(type);
