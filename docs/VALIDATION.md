@@ -814,3 +814,56 @@ They do not prove that every DDI version/device rejects lower frame rates or tha
 no other control exists. No sender-FPS API or production offer change was added.
 Every successful stream stopped cleanly; pairing, DDI and the system Server's
 manual connection were retained.
+
+## macOS VideoToolbox re-evaluation (2026-10-30)
+
+Host: Apple M2 Max, macOS 15.8.1 (24H32), arm64. This re-evaluates the current
+adapter, not every OS/sample combination in the historical macOS 26 notes.
+Temporary copies of the current adapter varied NAL length-prefix size and queried
+`kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder` both after
+configuration and after the first output. Required-hardware runs supplied
+`kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder`.
+Production source, defaults and consumer pins were not changed.
+
+A fresh ten-second Wi-Fi capture from iPhone14,4/iOS 27.0.1 retained pairing/DDI,
+reported 60 FPS/6,000,000 bit/s, zero RTP sequence gaps/malformed packets, and
+stopped cleanly. Its 590 access units and 1136x2464 decoded pixels were replayed
+without network/rendering. Every output-enabled successful mode produced 590/590
+pictures; the largest VCL NAL in this capture was 44,149 bytes.
+
+| Backend / prefix | Hardware status | Process CPU seconds | Decode median ms | Decode p95 ms |
+| --- | --- | --- | --- | --- |
+| libavcodec software | software | 3.804–3.824 | 1.53–1.63 | 3.02–3.31 |
+| Existing VideoToolbox / 2 bytes | query fails -12900; unconfirmed | 0.214 | 2.60 | 3.77 |
+| VideoToolbox / 4 bytes, required hardware | true | 0.519–0.530 | 4.00–4.03 | 4.90–4.95 |
+| Same hardware, no CPU pixel readback | true | 0.158 | 3.09 | 3.67 |
+
+The required-hardware 2-byte configuration failed session creation (status 318).
+This does not establish that an unconstrained 2-byte session is software: its
+hardware-state query failed rather than returning false. The 4-byte configuration
+returned true both before and after first output, including when hardware was
+explicitly required. An earlier 592-AU saved device clip likewise decoded fully
+with four-byte prefixes. Thus the old four-byte failure is not reproducible on
+these current host/sample combinations.
+
+An eight-picture synthetic HEVC clip with deterministic noise contained VCL NALs
+up to 481,859 bytes. Software and required-hardware/four-byte decoding produced
+8/8 pictures; the current two-byte adapter rejected all eight for size. This
+checks the large-NAL path, not all device profiles or transport recovery.
+
+Color also needs an explicit policy. The fresh stream declares full range but
+no color matrix in its probed stream metadata. Default software and hardware
+BGRA output of the same first picture differed by mean 6.37 RGB levels (0..255).
+Supplying a BT.601 format-description extension to match the software default
+reduced that mean to 0.93; maximum per-channel difference remained 102, so this
+is not a pixel-identical result. That hardware run still decoded 590/590 pictures
+with hardware=true, using 0.453 process CPU seconds and median 3.71 ms.
+Explicitly signaled source matrices must not be overwritten by a blanket default.
+
+The CPU comparison is for the application process, not total system CPU, GPU
+power or energy (VideoToolbox may use helper processes). These are synchronous
+offline decode-call timings, not input-to-display latency or a live FPS gain.
+Both software and confirmed hardware are fast enough for this 60-FPS clip.
+Potential implementation work is four-byte sample support, actual backend
+reporting, software fallback and consistent color handling; default-backend or
+asynchronous-pipeline changes require their own evidence.
