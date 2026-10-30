@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0 — 2026-10-30
+
+- Add `video.start.max_bitrate` to request a device video bitrate ceiling in bit/s,
+  with no device-specific clamp. Report the request and negotiated `TXMaxBitrate`.
+  Shared video preserves the first producer's setting and warns on differing requests.
+- Add `video.start.max_fps` to limit receiver BGRA conversion and publication.
+  Continue reference decoding and encoded recording unchanged. Shared groups use
+  the highest requested rate, with unlimited taking precedence.
+- Advertise both capabilities through `server.info`. C ABI 1, RPC protocol 1 and
+  pairing records remain unchanged. Default decode behavior remains unchanged.
+
 ## 1.5.1 — 2026-10-30
 
 - Fix Windows SDK header compatibility when building the native DNS-SD backend
