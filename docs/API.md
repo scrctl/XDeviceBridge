@@ -581,6 +581,12 @@ JVM used for system codec discovery and size checks. Without that integration,
 on Android versions below API 29, or for unsupported sizes, decoding falls back
 to software. MediaCodec’s concrete component is not exposed by FFmpeg’s public
 API, so `video_hardware_decode` remains null for this backend.
+Windows uses D3D11VA and Linux uses VA-API when the linked FFmpeg provides
+HEVC acceleration for that backend and a usable device/driver is available.
+Decoded GPU frames are transferred to CPU memory before BGRA conversion;
+output-rate-limited frames skip this transfer. Backend initialization, decode
+or transfer failure uses the existing software fallback. The backend reports
+`video_hardware_decode:true` only after receiving an actual hardware frame.
 `hardware_decode:false` explicitly selects software where available. Platforms
 without an implemented hardware backend continue to use software; fallback needs
 a software decoder in the build. Encoded-only recording does not select a decoder.

@@ -937,3 +937,21 @@ The final original-clip runs again decoded all 590 pictures on both devices.
 The Android server cross-build passed. Existing FFmpeg-decoder and frame-capture
 regressions passed, including platform failure and software fallback. No Android
 application was installed/tested and no new real-time preview claim is made.
+
+
+## Windows / Linux FFmpeg hardware backend: pending device acceptance
+
+D3D11VA (Windows) and VA-API (Linux) adapters use FFmpeg's hardware device/context
+API, accept only the requested hardware pixel format, and transfer surfaces to
+CPU BGRA only for requested pixel output. Real hardware frames establish the
+reported hardware status; software output must not masquerade as hardware.
+Initialization, decode and readback failures follow FramePump's software fallback.
+
+This implementation has not been accepted on a real Windows/Linux GPU. An AMD
+Windows host is expected later; virtual machines and hosted CI cannot substitute
+for that acceptance. HEVC profile/resolution support, pixel/color correctness,
+rate-limited readback, driver failure/fallback and CPU/latency remain to verify.
+The trimmed desktop release FFmpeg recipe also needs enabling and packaging of
+the corresponding hardware backends before a release can claim these features.
+Do not interpret host compilation or the existing fake-backend regressions as
+proof of D3D11VA/VA-API runtime support or improved performance.

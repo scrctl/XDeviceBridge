@@ -62,7 +62,7 @@ public:
     [[nodiscard]] virtual bool failed() const { return false; }
 };
 
-/// 当前平台的默认后端：Apple 使用 VideoToolbox，Android 使用 MediaCodec，其他平台使用软件。
+/// 平台后端：VideoToolbox / MediaCodec / D3D11VA / VA-API；不可用时由调用方回退软件。
 /// 工厂返回对象不代表 configure 一定成功，也不保证使用硬件解码。
 std::unique_ptr<Decoder> create_platform_decoder();
 

@@ -8,6 +8,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
@@ -28,11 +29,12 @@ std::string av_strerr(int st) {
     return buf;
 }
 
-/// libavcodec HEVC 后端，Android 可选 MediaCodec；输出经 swscale 转为 CPU BGRA。
+/// libavcodec HEVC 后端，可使用平台硬解；输出经 swscale 转为 CPU BGRA。
 /// ctx_、frame_、sws_ 和参数集缓存由实例拥有，同一实例不提供并发调用保护。
 class FFmpegDecoder final : public Decoder {
 public:
-    explicit FFmpegDecoder(bool mediacodec = false) : mediacodec_(mediacodec) {}
+    explicit FFmpegDecoder(bool mediacodec = false, AVHWDeviceType device = AV_HWDEVICE_TYPE_NONE)
+        : device_type_(device), mediacodec_(mediacodec) {}
     ~FFmpegDecoder() override { teardown(); }
 
     bool configure(const Nal &vps, const Nal &sps, const Nal &pps) override {
@@ -46,6 +48,10 @@ public:
         }
         ctx_ = avcodec_alloc_context3(codec);
         if (ctx_ == nullptr) {
+            return false;
+        }
+        if (device_type_ != AV_HWDEVICE_TYPE_NONE && !configure_device(codec)) {
+            teardown();
             return false;
         }
         if (mediacodec_) {
@@ -154,7 +160,7 @@ public:
             std::call_once(warned, [send_st] {
                 std::fprintf(stderr, "FFmpeg rejected packet: %s\n", av_strerr(send_st).c_str());
             });
-            failed_ = mediacodec_;
+            failed_ = mediacodec_ || device_type_ != AV_HWDEVICE_TYPE_NONE;
             return false;
         }
 
@@ -163,16 +169,45 @@ public:
     }
 
     [[nodiscard]] const char *backend_name() const override {
+        if (device_type_ == AV_HWDEVICE_TYPE_D3D11VA) return "libavcodec/hevc/d3d11va";
+        if (device_type_ == AV_HWDEVICE_TYPE_VAAPI) return "libavcodec/hevc/vaapi";
         return mediacodec_ ? "libavcodec/hevc_mediacodec" : "libavcodec/hevc";
     }
     [[nodiscard]] std::optional<bool> hardware_accelerated() const override {
         // MediaCodec may select a vendor or a system software codec. The FFmpeg
         // API does not expose that identity, so do not claim hardware use here.
+        if (device_type_ != AV_HWDEVICE_TYPE_NONE) return hardware_output_;
         return mediacodec_ ? std::nullopt : std::optional<bool>(false);
     }
     [[nodiscard]] bool failed() const override { return failed_; }
 
 private:
+    bool configure_device(const AVCodec *codec) {
+        for (int i = 0; const auto *config = avcodec_get_hw_config(codec, i); ++i) {
+            if (config->device_type == device_type_ &&
+                (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
+                hardware_format_ = config->pix_fmt;
+                break;
+            }
+        }
+        if (hardware_format_ == AV_PIX_FMT_NONE) return false;
+        const int status = av_hwdevice_ctx_create(&ctx_->hw_device_ctx, device_type_, nullptr, nullptr, 0);
+        if (status < 0) {
+            std::fprintf(stderr, "Cannot create %s decoder device: %s\n",
+                av_hwdevice_get_type_name(device_type_), av_strerr(status).c_str());
+            return false;
+        }
+        ctx_->opaque = this;
+        ctx_->get_format = [](AVCodecContext *context, const AVPixelFormat *formats) {
+            const auto *self = static_cast<FFmpegDecoder *>(context->opaque);
+            for (; *formats != AV_PIX_FMT_NONE; ++formats)
+                if (*formats == self->hardware_format_) return *formats;
+            return AV_PIX_FMT_NONE;
+        };
+        transfer_ = av_frame_alloc();
+        return transfer_ != nullptr;
+    }
+
     bool read_source_format(const AVPacket *packet) {
         const AVCodec *codec = avcodec_find_decoder_by_name("hevc");
         if (!codec) return false;
@@ -199,8 +234,24 @@ private:
             av_frame_unref(frame_);
             const int status = avcodec_receive_frame(ctx_, frame_);
             if (status == AVERROR(EAGAIN) || status == AVERROR_EOF) return true;
-            if (status < 0 || (output_pixels && !to_frame(frame_, out))) {
-                failed_ = mediacodec_;
+            if (status >= 0 && device_type_ != AV_HWDEVICE_TYPE_NONE) {
+                if (frame_->format != hardware_format_ || !frame_->hw_frames_ctx) {
+                    failed_ = true;
+                    return false;
+                }
+                hardware_output_ = true;
+                // A rate-limited frame still decodes, but avoids GPU readback.
+                if (!output_pixels) { produced = true; continue; }
+                av_frame_unref(transfer_);
+                if (av_hwframe_transfer_data(transfer_, frame_, 0) < 0 ||
+                    av_frame_copy_props(transfer_, frame_) < 0) {
+                    failed_ = true;
+                    return false;
+                }
+            }
+            const AVFrame *picture = device_type_ != AV_HWDEVICE_TYPE_NONE ? transfer_ : frame_;
+            if (status < 0 || (output_pixels && !to_frame(picture, out))) {
+                failed_ = mediacodec_ || device_type_ != AV_HWDEVICE_TYPE_NONE;
                 return false;
             }
             produced = true;
@@ -270,6 +321,9 @@ private:
 
     void teardown() {
         failed_ = false;
+        hardware_output_.reset();
+        hardware_format_ = AV_PIX_FMT_NONE;
+        av_frame_free(&transfer_);
         opened_ = false;
         packet_serial_ = 0;
         if (sws_ != nullptr) {
@@ -286,6 +340,10 @@ private:
         }
     }
 
+    AVHWDeviceType device_type_ = AV_HWDEVICE_TYPE_NONE;
+    AVPixelFormat hardware_format_ = AV_PIX_FMT_NONE;
+    std::optional<bool> hardware_output_;
+    AVFrame *transfer_ = nullptr;
     bool mediacodec_ = false;
     bool failed_ = false;
     bool opened_ = false;
@@ -307,6 +365,14 @@ std::unique_ptr<Decoder> create_software_decoder() {
 #if defined(__ANDROID__)
 std::unique_ptr<Decoder> create_platform_decoder() {
     return std::make_unique<FFmpegDecoder>(true);
+}
+#elif defined(_WIN32)
+std::unique_ptr<Decoder> create_platform_decoder() {
+    return std::make_unique<FFmpegDecoder>(false, AV_HWDEVICE_TYPE_D3D11VA);
+}
+#elif defined(__linux__)
+std::unique_ptr<Decoder> create_platform_decoder() {
+    return std::make_unique<FFmpegDecoder>(false, AV_HWDEVICE_TYPE_VAAPI);
 }
 #endif
 

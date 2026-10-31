@@ -503,6 +503,9 @@ Android 在构建包含 `hevc_mediacodec` 和原生 HEVC 解码器时使用 Medi
 内嵌 Java SDK 的 `NsdDiscovery.acquire(context)` 会注册 JVM，用于系统解码器发现和尺寸检查。
 未完成此集成、Android 版本低于 API 29 或尺寸不支持时回退软件解码。
 FFmpeg 公共 API 不暴露具体 MediaCodec 组件，因此此后端的 `video_hardware_decode` 为 null。
+Windows 使用 D3D11VA，Linux 使用 VA-API，要求链接的 FFmpeg 包含相应 HEVC 加速，
+且设备和驱动可用。GPU 解码帧先回读到 CPU 再转换为 BGRA；被输出限速跳过的帧不回读。
+初始化、解码或回读失败时沿用软件回退。收到实际硬件帧后才上报 `video_hardware_decode:true`。
 `hardware_decode:false` 显式优先软解；尚无硬解后端的平台继续使用软解。
 自动回退需要构建中包含软件解码器。只接收编码流的录制不选择解码器。
 
