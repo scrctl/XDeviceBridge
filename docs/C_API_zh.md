@@ -100,6 +100,27 @@ xdb_client *xdb_client_connect(uint16_t port, xdb_event_callback event, void *us
 Android 需要应用持有的内嵌 Server，不自动创建进程。
 销毁桌面客户端不会停止已脱离的后台服务。
 
+### `xdb_client_connect_cancellable`
+
+```c
+typedef int (*xdb_cancel_callback)(void *userdata);
+xdb_client *xdb_client_connect_cancellable(
+    uint16_t port, xdb_event_callback event, void *userdata,
+    xdb_cancel_callback cancel, void *cancel_userdata);
+```
+
+端口选择与句柄所有权遵循 `xdb_client_connect`。传入非 NULL 的 `cancel` 时，
+启动锁等待、Server 启动及重试、回环连接和 hello 握手共享 15 秒预算。
+取消回调返回非零值表示请求取消。NULL 沿用普通连接入口的行为。
+
+取消回调可能在作用域内的 watchdog 线程执行，必须线程安全、不能抛异常，
+也不能重入本次连接操作。调用方持有 `cancel_userdata`，直到函数返回。
+返回前会等待所有 watchdog 线程结束，此后不会再访问取消回调或其 userdata。
+
+失败返回 NULL，通过调用线程的 `xdb_last_error` 读取诊断。取消会关闭待完成连接的
+客户端套接字；期间启动的共享 Server 可以继续运行。取消与成功完成发生竞争时，
+函数可能返回有效客户端，调用方应在无需使用时销毁该句柄。
+
 ### `xdb_client_start_server`
 
 ```c
