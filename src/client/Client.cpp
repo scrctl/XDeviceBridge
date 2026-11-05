@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "Process.h"
+#include "transport/IoBudget.h"
 #include "ipc/Json.h"
 #include "ipc/Wire.h"
 #include "xdb/xdb.h"
@@ -26,7 +27,7 @@ struct xdb_client {
 };
 namespace {
 thread_local std::string diagnostic;
-std::mutex startup_mutex;
+std::timed_mutex startup_mutex;
 bool resolve_port(uint16_t &port) {
     if (port)
         return true;
@@ -43,17 +44,20 @@ bool resolve_port(uint16_t &port) {
     }
     return true;
 }
-std::unique_ptr<xdb_client> connect_existing(uint16_t port, bool &not_running) {
+std::unique_ptr<xdb_client> connect_existing(uint16_t port, bool &not_running, const xdb::transport::IoBudget *budget = nullptr) {
     auto client = std::make_unique<xdb_client>();
-    client->socket = xdb::ipc::connect(port, diagnostic, &not_running);
+    client->socket = xdb::ipc::connect(port, diagnostic, &not_running, budget);
     if (!client->socket.valid())
         return nullptr;
+    std::unique_ptr<xdb::transport::BudgetWatchdog> watch;
+    if (budget) watch = std::make_unique<xdb::transport::BudgetWatchdog>(*budget, [&] { client->socket.interrupt(); });
     client->socket.set_read_timeout(5000, diagnostic);
     xdb_response *raw = nullptr;
     const auto params = Json{{"protocol", xdb::ipc::protocol_version}}.dump();
-    if (!xdb_client_request(client.get(), "hello", params.c_str(), &raw))
-        return nullptr;
+    const bool ok = xdb_client_request(client.get(), "hello", params.c_str(), &raw);
     std::unique_ptr<xdb_response> response(raw);
+    if (watch && !watch->finish(diagnostic)) return nullptr;
+    if (!ok) return nullptr;
     auto value = xdb::ipc::parse_json(response->message.json);
     if (!value.value("ok", false) || value.value("result", Json::object()).value("protocol", 0) != xdb::ipc::protocol_version) {
         diagnostic = "xdb handshake rejected: incompatible protocol; stop the existing server with its original xdb kill-server, then start the matching version";
@@ -63,20 +67,25 @@ std::unique_ptr<xdb_client> connect_existing(uint16_t port, bool &not_running) {
     client->socket.set_read_timeout(0, diagnostic);
     return client;
 }
-std::unique_ptr<xdb_client> connect_or_start(uint16_t port, const char *directory) {
+std::unique_ptr<xdb_client> connect_or_start(uint16_t port, const char *directory, const xdb::transport::IoBudget *budget = nullptr) {
     bool not_running = false;
-    auto client = connect_existing(port, not_running);
+    auto client = connect_existing(port, not_running, budget);
     if (client || !not_running)
         return client;
-    std::lock_guard lock(startup_mutex);
-    client = connect_existing(port, not_running);
+    std::unique_lock lock(startup_mutex, std::defer_lock);
+    while (!lock.try_lock_for(std::chrono::milliseconds(20))) {
+        if (budget && !budget->check(diagnostic, "xdb startup")) return nullptr;
+    }
+    if (budget && !budget->check(diagnostic, "xdb startup")) return nullptr;
+    client = connect_existing(port, not_running, budget);
     if (client || !not_running)
         return client;
-    if (!xdb::client::launch_server(port, directory, diagnostic))
+    if (!xdb::client::launch_server(port, directory, diagnostic, budget))
         return nullptr;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     do {
-        client = connect_existing(port, not_running);
+        if (budget && !budget->check(diagnostic, "xdb connection")) return nullptr;
+        client = connect_existing(port, not_running, budget);
         if (client || !not_running)
             return client;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -151,11 +160,19 @@ int xdb_client_kill_server(uint16_t port) {
     }
 }
 xdb_client *xdb_client_connect(uint16_t port, xdb_event_callback event, void *userdata) {
+    return xdb_client_connect_cancellable(port, event, userdata, nullptr, nullptr);
+}
+xdb_client *xdb_client_connect_cancellable(uint16_t port, xdb_event_callback event, void *userdata,
+                                          xdb_cancel_callback cancel, void *cancel_userdata) {
     diagnostic.clear();
     try {
         if (!resolve_port(port))
             return nullptr;
-        auto client = connect_or_start(port, nullptr);
+        const xdb::transport::IoBudget budget({std::chrono::seconds(15),
+            cancel ? std::function<bool()>([&] { return cancel(cancel_userdata) != 0; }) : std::function<bool()>()});
+        if (cancel && !budget.check(diagnostic, "xdb connection")) return nullptr;
+        auto client = connect_or_start(port, nullptr, cancel ? &budget : nullptr);
+        if (cancel && !budget.check(diagnostic, "xdb connection")) return nullptr;
         if (!client)
             return nullptr;
         client->event = event;

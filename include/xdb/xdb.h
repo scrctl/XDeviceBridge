@@ -24,7 +24,8 @@ extern "C" {
 typedef struct xdb_server xdb_server;
 typedef struct xdb_client xdb_client;
 typedef struct xdb_response xdb_response;
-// Callbacks run synchronously within request(). Data is borrowed until return.
+typedef int (*xdb_cancel_callback)(void *userdata);
+// Events run synchronously within request(). Data is borrowed until return.
 // Do not reenter or destroy this client from its event callback.
 typedef void (*xdb_event_callback)(const char *json, void *userdata);
 // Library version: static storage, no server connection required.
@@ -51,6 +52,12 @@ XDB_CLIENT_API int xdb_client_kill_server(uint16_t port);
 // Desktop connections automatically start a missing server; Android connects to the App's server.
 // Port 0 uses XDB_PORT or 17423.
 XDB_CLIENT_API xdb_client *xdb_client_connect(uint16_t port, xdb_event_callback event, void *userdata);
+// Cancellation covers startup, loopback connection and hello with a total 15-second budget.
+// The callback may run on
+// a scoped watchdog thread and must be thread-safe. No callbacks run after return.
+// Cancellation leaves an already launched shared server running.
+XDB_CLIENT_API xdb_client *xdb_client_connect_cancellable(uint16_t port, xdb_event_callback event,
+    void *userdata, xdb_cancel_callback cancel, void *cancel_userdata);
 // One outstanding request per client. Response owns JSON and any binary payload.
 // Returns 1 when a well-formed response was received; inspect its `ok` field.
 XDB_CLIENT_API int xdb_client_request(xdb_client *client, const char *method, const char *params_json,

@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+namespace xdb::transport { class IoBudget; }
 namespace xdb::ipc {
 inline constexpr uint32_t protocol_version = 1;
 inline constexpr std::string_view frame_magic = "XDB1";
@@ -16,5 +17,5 @@ struct Message {
 };
 bool read(transport::Socket &socket, Message &out, std::string &error);
 bool write(transport::Socket &socket, const Message &message, std::string &error);
-transport::Socket connect(uint16_t port, std::string &error, bool *not_running = nullptr);
+transport::Socket connect(uint16_t port, std::string &error, bool *not_running = nullptr, const transport::IoBudget *budget = nullptr);
 } // namespace xdb::ipc

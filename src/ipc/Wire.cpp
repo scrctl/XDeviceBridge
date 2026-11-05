@@ -1,6 +1,8 @@
 #include "util/Bytes.h"
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "Wire.h"
+#include "transport/IoBudget.h"
+#include <memory>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -41,7 +43,7 @@ bool write(transport::Socket &socket, const Message &message, std::string &error
            socket.write_all(message.json.data(), message.json.size(), error) &&
            (message.binary.empty() || socket.write_all(message.binary.data(), message.binary.size(), error));
 }
-transport::Socket connect(uint16_t port, std::string &error, bool *not_running) {
+transport::Socket connect(uint16_t port, std::string &error, bool *not_running, const transport::IoBudget *budget) {
     if (not_running)
         *not_running = false;
     if (!transport::initialize_sockets(error))
@@ -51,6 +53,9 @@ transport::Socket connect(uint16_t port, std::string &error, bool *not_running) 
         error = transport::socket_error_message();
         return {};
     }
+    if (budget && !budget->check(error, "xdb connection")) return {};
+    std::unique_ptr<transport::BudgetWatchdog> watch;
+    if (budget) watch = std::make_unique<transport::BudgetWatchdog>(*budget, [&] { socket.interrupt(); });
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -67,6 +72,7 @@ transport::Socket connect(uint16_t port, std::string &error, bool *not_running) 
         }
         return {};
     }
+    if (watch && !watch->finish(error)) return {};
     return socket;
 }
 } // namespace xdb::ipc
