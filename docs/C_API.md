@@ -113,6 +113,30 @@ executable's kill-server explicitly when upgrading.
 Android: requires an application-owned embedded server; no automatic process
 launch. Destroying a desktop client does not stop its detached background server.
 
+### `xdb_client_connect_cancellable`
+
+```c
+typedef int (*xdb_cancel_callback)(void *userdata);
+xdb_client *xdb_client_connect_cancellable(
+    uint16_t port, xdb_event_callback event, void *userdata,
+    xdb_cancel_callback cancel, void *cancel_userdata);
+```
+
+Uses the same endpoint and ownership rules as `xdb_client_connect`. A non-NULL
+`cancel` enables a shared 15-second budget covering startup-lock acquisition,
+server startup/retries, loopback connection and the hello handshake. Returning
+nonzero requests cancellation. NULL keeps the ordinary connect behavior.
+
+The cancel callback may run on a scoped watchdog thread. It must be thread-safe,
+must not throw, and must not reenter this connection operation. The caller owns
+`cancel_userdata` until the call returns. All watchdogs are joined before return,
+so neither the callback nor its userdata is accessed afterward.
+
+Failure returns NULL with a calling-thread `xdb_last_error` diagnostic. Cancellation
+closes the pending client socket. A shared server launched during this attempt
+can remain running. A cancellation racing with successful completion can return a
+valid client, which the caller owns and must destroy if no longer needed.
+
 ### `xdb_client_start_server`
 
 ```c
