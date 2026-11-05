@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 #include "Process.h"
+#include "transport/IoBudget.h"
 #include <cstdlib>
 #include <filesystem>
 #include <string_view>
@@ -110,7 +111,8 @@ std::wstring quote(const std::string &argument) {
     result.append(slashes * 2, L'\\');
     return result + L'"';
 }
-bool spawn(const std::vector<std::string> &arguments, std::string &error) {
+bool spawn(const std::vector<std::string> &arguments, std::string &error, const transport::IoBudget *budget) {
+    if (budget && !budget->check(error, "xdb startup")) return false;
     std::wstring command;
     for (const auto &argument : arguments) {
         if (!command.empty())
@@ -152,7 +154,7 @@ bool spawn(const std::vector<std::string> &arguments, std::string &error) {
     return true;
 }
 #else
-bool spawn(const std::vector<std::string> &arguments, std::string &error) {
+bool spawn(const std::vector<std::string> &arguments, std::string &error, const transport::IoBudget *budget) {
     std::vector<char *> argv;
     for (const auto &argument : arguments)
         argv.push_back(const_cast<char *>(argument.c_str()));
@@ -217,7 +219,15 @@ bool spawn(const std::vector<std::string> &arguments, std::string &error) {
     while (waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
     pollfd fd{input, POLLIN, 0};
     int ready;
-    do { ready = poll(&fd, 1, 5000); } while (ready < 0 && errno == EINTR);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        if (budget && !budget->check(error, "xdb startup")) {
+            close(input);
+            return false;
+        }
+        ready = poll(&fd, 1, 20);
+    } while ((ready == 0 || (ready < 0 && errno == EINTR)) &&
+             std::chrono::steady_clock::now() < deadline);
     ssize_t size = ready > 0 ? read(input, &code, sizeof(code)) : -1;
     close(input);
     if (size == 0)
@@ -228,13 +238,15 @@ bool spawn(const std::vector<std::string> &arguments, std::string &error) {
 #endif
 #endif
 } // namespace
-bool launch_server(uint16_t port, const char *directory, std::string &error) {
+bool launch_server(uint16_t port, const char *directory, std::string &error, const transport::IoBudget *budget) {
 #ifdef __ANDROID__
     (void)port;
     (void)directory;
+    (void)budget;
     error = "Start the embedded xdb Server in the Android app before connecting";
     return false;
 #else
+    if (budget && !budget->check(error, "xdb startup")) return false;
     auto path = find_executable();
     if (path.empty()) {
         error = "Cannot find xdb executable; install xdb on PATH or set XDB_EXECUTABLE to its path";
@@ -245,7 +257,7 @@ bool launch_server(uint16_t port, const char *directory, std::string &error) {
         arguments.push_back("--data-dir");
         arguments.emplace_back(directory);
     }
-    return spawn(arguments, error);
+    return spawn(arguments, error, budget);
 #endif
 }
 } // namespace xdb::client
