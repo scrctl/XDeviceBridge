@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.1 — 2026-11-06
+
+- Add `xdb_client_connect_cancellable` with a thread-safe cancellation callback.
+  Cancellation covers startup-lock waiting, automatic server startup/retries,
+  loopback connection and the hello handshake, sharing a 15-second budget.
+- Join cancellation watchdogs before returning so callback userdata can be released
+  safely. A shared server started during the attempt can keep running.
+- Document the new API and verify stalled handshakes, startup retries, concurrent
+  startup-lock waiting and callback lifetime.
+- Preserve the ordinary connect API behavior, C ABI 1, RPC protocol 1 and pairing records.
+
 ## 1.6.0 — 2026-10-30
 
 - Add `video.start.max_bitrate` to request a device video bitrate ceiling in bit/s,
