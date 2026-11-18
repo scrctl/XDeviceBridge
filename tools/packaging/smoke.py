@@ -11,6 +11,33 @@ import subprocess
 import sys
 import tempfile
 
+def check_hevc_hardware_config(codec, relocated, windows):
+    class CodecHwConfig(C.Structure):
+        _fields_ = [('pixel_format', C.c_int), ('methods', C.c_int), ('device_type', C.c_int)]
+
+    directory = relocated / ('bin' if windows else 'lib')
+    pattern = '*avutil*.dll' if windows else 'libavutil.so*'
+    util = C.CDLL(str(sorted(directory.glob(pattern))[0]))
+    util.av_hwdevice_find_type_by_name.argtypes = [C.c_char_p]
+    util.av_hwdevice_find_type_by_name.restype = C.c_int
+    backend = b'd3d11va' if windows else b'vaapi'
+    device = util.av_hwdevice_find_type_by_name(backend)
+    assert device, f'Bundled FFmpeg lacks the {backend.decode()} device'
+    codec.avcodec_find_decoder_by_name.argtypes = [C.c_char_p]
+    codec.avcodec_find_decoder_by_name.restype = C.c_void_p
+    codec.avcodec_get_hw_config.argtypes = [C.c_void_p, C.c_int]
+    codec.avcodec_get_hw_config.restype = C.POINTER(CodecHwConfig)
+    hevc = codec.avcodec_find_decoder_by_name(b'hevc')
+    assert hevc, 'Bundled FFmpeg lacks the HEVC decoder'
+    # Match the hardware-device-context method used by FFmpegDecoder.cpp.
+    index = 0
+    while config := codec.avcodec_get_hw_config(hevc, index):
+        if config.contents.device_type == device and config.contents.methods & 1:
+            return
+        index += 1
+    raise AssertionError(f'Bundled HEVC decoder lacks the {backend.decode()} hardware configuration')
+
+
 def probe(relocated, temporary):
     windows = platform.system() == 'Windows'
     executable = relocated / 'bin' / ('xdb.exe' if windows else 'xdb')
@@ -33,6 +60,8 @@ def probe(relocated, temporary):
     codec.av_bsf_get_by_name.argtypes = [C.c_char_p]
     codec.av_bsf_get_by_name.restype = C.c_void_p
     assert codec.av_bsf_get_by_name(b'hevc_metadata'), 'HEVC recording filter is missing'
+    if platform.system() in ('Linux', 'Windows'):
+        check_hevc_hardware_config(codec, relocated, windows)
     # Test both SDK sibling-bin lookup and a consumer shipping its own client on PATH.
     for from_path in (False, True):
         candidate = library

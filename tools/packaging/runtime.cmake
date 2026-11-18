@@ -10,7 +10,8 @@ elseif(APPLE)
 else()
     # The Linux archive targets the build distribution's libc/C++ ABI, like other
     # native CLI packages. These remain platform prerequisites, not bundled files.
-    set(pre PRE_EXCLUDE_REGEXES "^ld-linux.*" "^lib(c|m|dl|pthread|rt|resolv|z|stdc\\+\\+|gcc_s)\\.so.*")
+    set(pre PRE_EXCLUDE_REGEXES "^ld-linux.*" "^lib(c|m|dl|pthread|rt|resolv|z|stdc\\+\\+|gcc_s)\\.so.*"
+        "^lib(va|va-drm|drm)\\.so(\\..*)?$")
 endif()
 file(GET_RUNTIME_DEPENDENCIES
     EXECUTABLES "${executable}"

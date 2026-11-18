@@ -33,7 +33,7 @@ if [ "$platform" != macos ]; then
     fetch "$CURL_URL" "$CURL_SHA256" "curl-$CURL_VERSION.tar.xz" "curl-$CURL_VERSION"
 fi
 marker="$prefix/recipe.txt"
-recipe="desktop-3 $platform $(uname -m) OpenSSL-$OPENSSL_VERSION curl-$CURL_VERSION FFmpeg-$FFMPEG_VERSION"
+recipe="desktop-4 $platform $(uname -m) OpenSSL-$OPENSSL_VERSION curl-$CURL_VERSION FFmpeg-$FFMPEG_VERSION"
 if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$recipe" ]; then
     (
         cd "$work/openssl-$OPENSSL_VERSION"
@@ -81,9 +81,11 @@ if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$recipe" ]; then
         if [ "$platform" = macos ]; then
             args+=(--enable-pthreads --install-name-dir=@rpath --extra-cflags=-mmacosx-version-min=13.3 --extra-ldflags=-mmacosx-version-min=13.3)
         elif [ "$platform" = windows ]; then
-            args+=(--target-os=mingw32 --arch=x86_64 --cc=gcc --cxx=g++ --disable-pthreads --enable-w32threads)
+            args+=(--target-os=mingw32 --arch=x86_64 --cc=gcc --cxx=g++ --disable-pthreads --enable-w32threads
+                --enable-d3d11va --enable-hwaccel=hevc_d3d11va,hevc_d3d11va2)
         else
-            args+=(--enable-pthreads)
+            # FFmpeg uses libdrm to select a render node when no GPU device is specified.
+            args+=(--enable-pthreads --enable-libdrm --enable-vaapi --enable-hwaccel=hevc_vaapi)
         fi
         "$work/ffmpeg-$FFMPEG_VERSION/configure" "${args[@]}"
         make -j"$jobs"

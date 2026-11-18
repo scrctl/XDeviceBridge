@@ -58,9 +58,11 @@ Custom absolute install and command directories can be supplied:
 macOS packages target macOS 13.3 or newer, for the archive's CPU architecture.
 Ordinary `packages` artifacts are ad hoc signed; separately labelled `notarized`
 ZIPs are Developer ID signed and Apple Accepted. See the online ticket check below.
-Linux packages built on Ubuntu 24.04 require a compatible glibc/libstdc++ runtime
-and system zlib; they are not universal Linux binaries. Linux USB access also
-requires usbmuxd.
+Linux packages built on Ubuntu 24.04 require a compatible glibc/libstdc++ runtime,
+system zlib, libva and libdrm (`libva2`, `libva-drm2`, and `libdrm2` on Ubuntu).
+VA-API hardware decoding also needs a compatible GPU driver and access to its
+DRM render node. xdb falls back to software when hardware decoding is unavailable.
+Linux USB access requires usbmuxd.
 
 ### Windows
 
@@ -101,7 +103,8 @@ directory. To uninstall a user-local runtime, stop its server, remove the
 
 Native release prerequisites: C++20 compiler, CMake >= 3.21, Ninja, Make, Perl,
 Python >= 3.10, pkg-config, curl, xz, and zlib development headers. x86-64 builds
-also need NASM. Linux packaging needs patchelf; Windows uses MSYS2 UCRT64 GCC.
+also need NASM. Linux packaging needs patchelf and the libva/libdrm development
+packages; Windows uses MSYS2 UCRT64 GCC.
 The workflow contains the platform package lists.
 
 ```sh
