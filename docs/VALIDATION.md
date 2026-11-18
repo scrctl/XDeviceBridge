@@ -939,19 +939,57 @@ regressions passed, including platform failure and software fallback. No Android
 application was installed/tested and no new real-time preview claim is made.
 
 
-## Windows / Linux FFmpeg hardware backend: pending device acceptance
+## Desktop hardware decoding acceptance (2026-11-19)
 
-D3D11VA (Windows) and VA-API (Linux) adapters use FFmpeg's hardware device/context
-API, accept only the requested hardware pixel format, and transfer surfaces to
-CPU BGRA only for requested pixel output. Real hardware frames establish the
-reported hardware status; software output must not masquerade as hardware.
-Initialization, decode and readback failures follow FramePump's software fallback.
+D3D11VA on Windows and VA-API on Linux use FFmpeg's hardware device context.
+The Server reports hardware only after receiving hardware frames and transfers
+them to CPU BGRA when the client requests pixels. The Linux adapter uses
+FFmpeg's automatic thread selection.
 
-This implementation has not been accepted on a real Windows/Linux GPU. An AMD
-Windows host is expected later; virtual machines and hosted CI cannot substitute
-for that acceptance. HEVC profile/resolution support, pixel/color correctness,
-rate-limited readback, driver failure/fallback and CPU/latency remain to verify.
-The trimmed desktop release FFmpeg recipe also needs enabling and packaging of
-the corresponding hardware backends before a release can claim these features.
-Do not interpret host compilation or the existing fake-backend regressions as
-proof of D3D11VA/VA-API runtime support or improved performance.
+A 90-AU HEVC sample (1136×2464) produced 90 hardware frames with successful
+BGRA readback in the xdb decoder on both the Windows GPU host and the NVIDIA
+VA-API Linux container. In the Linux comparison, automatic and single-thread
+modes produced identical BGRA output. The decoder retained automatic threading.
+
+The source builds also ran 60-second Wi-Fi mirror sessions against the same iPhone.
+The client requested newer 1136×2464 BGRA frames with a one-second wait and
+checked the Server's hardware status 13 times per run.
+
+| Platform | Confirmed backend | BGRA frames read | Waits with no newer frame |
+| --- | --- | ---: | ---: |
+| macOS | VideoToolbox | 1,151 | 0 |
+| Windows | D3D11VA | 2,452 | 11 |
+| Linux | VA-API | 1,337 | 0 |
+
+Windows resumed returning frames after the waits and reported D3D11VA at each
+check. These are client readback counts from separate sessions with different
+screen activity. They do not establish device-side frame loss, latency or
+relative throughput across platforms.
+
+### Release-recipe packages
+
+The trimmed FFmpeg 9.0.2 build explicitly enables HEVC D3D11VA on Windows
+and HEVC VA-API with DRM render-node support on Linux. Linux packages use the
+system libva/libdrm and GPU driver. The relocatable-package smoke test checks
+the bundled FFmpeg for a HEVC hardware-device-context configuration.
+
+The x86-64 Linux package built and tested on Debian 13 passed the relocation
+smoke test. On the NVIDIA GPU container, the extracted Server returned 2,695
+BGRA frames in 60 seconds, with 11 waits without a newer frame and VA-API
+confirmed at all 13 status checks. With the same archive and a deliberately
+invalid `LIBVA_DRIVER_NAME`, the Server reported VA-API initialization failure,
+fell back to software and returned 701 BGRA frames in 15 seconds. Two waits did
+not return a newer frame. Both runs returned 1136×2464 BGRA.
+
+The Windows x86-64 package built with MSYS2 UCRT64 passed the relocation
+smoke test. On the Windows GPU host the extracted ZIP returned 2,675 BGRA
+frames (1136×2464) in 60 seconds, with eight waits without a newer frame
+and D3D11VA confirmed at all 13 status checks.
+
+The same Windows ZIP was unpacked in a Parallels Windows guest. The offline
+probe linked the xdb decoder from the package build and loaded the ZIP's DLLs.
+D3D11VA failed at the first keyframe because the guest adapter exposed no
+decoder GUIDs. The probe retried that keyframe in software and read back
+90/90 BGRA frames. Their aggregate pixel checksum matched the software-only run.
+This verifies decoder recovery with the packaged libraries. The guest's Wi-Fi
+Server fallback was not tested because iPhone pairing could not be completed.
