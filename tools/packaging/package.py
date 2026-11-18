@@ -77,7 +77,7 @@ def dependencies(stage, build, prefix):
                 continue
             if not real.is_relative_to(prefix):
                 # Only the MinGW language runtime and zlib may come from the compiler installation.
-                if not (windows and re.fullmatch(r'(libgcc_s_.*|libstdc\+\+-6|libwinpthread-1|zlib1)\.dll', source.name, re.I)):
+                if not (windows and re.fullmatch(r'(libgcc_s_.*|libstdc\+\+-6|libwinpthread-1|zlib1|libz-1)\.dll', source.name, re.I)):
                     raise RuntimeError(f'Dependency escaped the release prefix: {source}')
             target = destination / source.name
             if target.exists() and digest(target) != digest(real):
