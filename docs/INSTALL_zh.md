@@ -53,8 +53,10 @@ macOS 包面向 macOS 13.3 或更新系统，CPU 架构需与运行包一致。
 普通 `packages` CI 产物使用 ad hoc 签名；单独标注 `notarized` 的运行 ZIP 使用
 Developer ID 签名并通过 Apple 公证。裸 CLI ZIP 的公证票据通过联网查询，不支持 staple。
 
-Linux 包在 Ubuntu 24.04 上构建，需要兼容的 glibc/libstdc++ 运行库和系统 zlib，
-并非适用于所有 Linux 发行版的通用二进制。Linux USB 访问还需要 usbmuxd。
+Linux 包在 Ubuntu 24.04 上构建，需要兼容的 glibc/libstdc++ 运行库、系统 zlib、
+libva 和 libdrm（Ubuntu 上为 `libva2`、`libva-drm2` 和 `libdrm2`）。
+VA-API 硬解还需要兼容的 GPU 驱动和 DRM 渲染节点访问权限，硬解不可用时 xdb 会回退到软解。
+Linux USB 访问需要 usbmuxd。
 
 ### Windows
 
@@ -102,7 +104,7 @@ xdb 停止。脚本拒绝覆盖其他命令或非自身管理的目录，也不�
 
 原生发行构建需要：C++20 编译器、CMake >= 3.21、Ninja、Make、Perl、Python >= 3.10、
 pkg-config、curl、xz 和 zlib 开发头文件。x86-64 构建还需要 NASM，Linux 打包需要
-patchelf，Windows 使用 MSYS2 UCRT64 GCC。各平台软件包清单见工作流。
+patchelf 以及 libva 和 libdrm 开发包，Windows 使用 MSYS2 UCRT64 GCC。各平台软件包清单见工作流。
 
 ```sh
 tools/packaging/dependencies.sh "$PWD/build-release-deps"
