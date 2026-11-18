@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.0 — 2026-11-19
+
+- Prefer hardware HEVC decoding on macOS via VideoToolbox, with software
+  fallback and support for NAL units larger than 65,535 bytes.
+- Add D3D11VA on Windows and VA-API on Linux. The Windows and Linux runtime
+  packages enable these backends in the bundled FFmpeg. Linux uses system
+  libva/libdrm and the installed GPU driver.
+- Add MediaCodec HEVC decoding for embedded Android builds that provide the
+  JVM-backed codec discovery. Unsupported sizes and unavailable hardware use
+  software decoding when available.
+- Report the actual video decoder and hardware status in `media.status`.
+  `video.start.hardware_decode: false` selects software decoding.
+- Preserve C ABI 1, RPC protocol 1 and existing pairing records.
+
 ## 1.6.1 — 2026-11-06
 
 - Add `xdb_client_connect_cancellable` with a thread-safe cancellation callback.
