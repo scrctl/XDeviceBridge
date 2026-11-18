@@ -993,3 +993,25 @@ decoder GUIDs. The probe retried that keyframe in software and read back
 90/90 BGRA frames. Their aggregate pixel checksum matched the software-only run.
 This verifies decoder recovery with the packaged libraries. The guest's Wi-Fi
 Server fallback was not tested because iPhone pairing could not be completed.
+
+### Upstream MaaFramework interoperability
+
+The official [MaaFramework main build](https://github.com/MaaXYZ/MaaFramework/actions/runs/44221900804)
+at `86853d1` (v6.0.0-beta.3) used the x86-64 Windows and Linux Server archives
+from the [xdb packaging run](https://github.com/scrctl/XDeviceBridge/actions/runs/44377043459)
+at `f982da5`. The MaaFramework binaries and their bundled xdb client were used
+as built upstream.
+
+The iOS controller used Wi-Fi and the Stream screenshot method. Each mode used
+a fresh Server process. A read-only connection queried `media.status` alongside
+the controller to verify the decoder and hardware flag. MaaFramework returned
+three valid 1125×2436 PNG screenshots with non-uniform pixel data in each mode.
+
+| Host | Option omitted | `hardware_decode: true` |
+| --- | --- | --- |
+| Linux NVIDIA GPU container | `libavcodec/hevc`, hardware=false, 3/3 screenshots | `libavcodec/hevc/vaapi`, hardware=true, 3/3 screenshots |
+| Windows GPU host | `libavcodec/hevc`, hardware=false, 3/3 screenshots | `libavcodec/hevc/d3d11va`, hardware=true, 3/3 screenshots |
+
+The first Linux hardware capture request timed out while waiting for a newer
+frame. On the repeat run, all three captures succeeded after the Server
+reported that VA-API output was ready.
